@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
 <title>UCubix — Phase 1 Vision</title>
 <style>
   /* Laravel Nova-inspired light theme. */
@@ -2003,6 +2006,16 @@ function viewEpicSnapshot(){
   const topCtry = Object.entries(byCtry).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const ctryPeak = topCtry.length ? topCtry[0][1] : 1;
 
+  // Region leaderboard (revenue per region — SEA / NEA, from each country's region).
+  const byRegion = {};
+  orders.forEach(o=>{
+    const rg = REGIONS[o.country]?.region || 'Other';
+    byRegion[rg] = (byRegion[rg]||0) + o.unitPriceUSD*o.qty;
+  });
+  const topRegion = Object.entries(byRegion).sort((a,b)=>b[1]-a[1]);
+  const regionPeak = topRegion.length ? topRegion[0][1] : 1;
+  const REGION_NAMES = { SEA:'Southeast Asia', NEA:'Northeast Asia', Other:'Other' };
+
   // Filter dropdown option lists (all SKUs / customers / suppliers, unfiltered).
   const allSkus = Object.values(STATE.publishers).flatMap(p=>p.skus.map(s=>({id:s.id,name:s.name})))
     .sort((a,b)=>a.name.localeCompare(b.name));
@@ -2080,7 +2093,7 @@ function viewEpicSnapshot(){
       .snap-head-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
       .snap-head-row h2{font-size:19px}
       .snap-hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:0}
-      .snap-boards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;flex:1;min-height:0}
+      .snap-boards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;flex:1;min-height:0}
       .snap-boards .snap-board{overflow:auto}
       /* Compare mode — plain head-to-head table, sits in the bottom panel */
       .snap-cmp-lead{font-size:14px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 14px;box-shadow:var(--shadow-sm)}
@@ -2166,8 +2179,21 @@ function viewEpicSnapshot(){
             <div class="row-item">
               <span class="snap-rank" style="background:${medal(i)};color:${medalText(i)}">${i+1}</span>
               <div style="min-width:0">
-                <div class="snap-name" style="display:flex;align-items:center;gap:6px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${REGIONS[c]?.name||c}</span><span class="tag" style="flex-shrink:0">${c}</span></div>
+                <div class="snap-name" style="display:flex;align-items:center;gap:6px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${REGIONS[c]?.name||c}</span><span class="tag" style="flex-shrink:0">${c}</span><span class="tag" style="flex-shrink:0;opacity:.7">${REGIONS[c]?.region||''}</span></div>
                 <div class="snap-bar"><div style="width:${(v/ctryPeak*100).toFixed(1)}%;background:${BARS[i%BARS.length]}"></div></div>
+              </div>
+              <div class="snap-val"><b>${money(v)}</b><div class="muted" style="font-size:11px">${(v/revenue*100||0).toFixed(0)}% of rev</div></div>
+            </div>`).join('') : '<p class="muted" style="padding:24px 0;text-align:center">No sales in this period.</p>'}
+        </div>
+
+        <div class="card snap-board">
+          <div class="snap-card-head"><h3>🗺️ Top Regions</h3><span class="cnt">${topRegion.length} region${topRegion.length===1?'':'s'}</span></div>
+          ${topRegion.length ? topRegion.map(([rg,v],i)=>`
+            <div class="row-item">
+              <span class="snap-rank" style="background:${medal(i)};color:${medalText(i)}">${i+1}</span>
+              <div style="min-width:0">
+                <div class="snap-name" style="display:flex;align-items:center;gap:6px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${REGION_NAMES[rg]||rg}</span><span class="tag" style="flex-shrink:0">${rg}</span></div>
+                <div class="snap-bar"><div style="width:${(v/regionPeak*100).toFixed(1)}%;background:${BARS[i%BARS.length]}"></div></div>
               </div>
               <div class="snap-val"><b>${money(v)}</b><div class="muted" style="font-size:11px">${(v/revenue*100||0).toFixed(0)}% of rev</div></div>
             </div>`).join('') : '<p class="muted" style="padding:24px 0;text-align:center">No sales in this period.</p>'}
