@@ -1440,13 +1440,19 @@ function viewPubCatalog(){
     </div>
     <p class="muted internal-only" style="margin:-6px 0 14px;font-size:11.5px">⚠ UCBX-506 in testing: outdated-flag accuracy depends on per-price last_sync (UCBX-480), not yet shipped — counts are indicative.</p>
 
-    <div class="grid cols-3">
+    <div class="topsearch" style="max-width:none;margin-bottom:14px">
+      <span class="ico">⌕</span>
+      <input type="text" id="catalog-search" placeholder="Search your games by title or ID…" autocomplete="off"/>
+    </div>
+    <p class="muted" id="catalog-count" style="margin:-6px 0 12px;font-size:12px">${num(d.skus.length)} titles — type to filter</p>
+
+    <div class="grid cols-3" id="catalog-grid">
       ${d.skus.map(s=>{
         const pr = s.prices['SG']; // headline price
         const r = resolvePrice(pr);
         const totalStock = s.batches.reduce((a,b)=>a+b.qty,0);
         return `
-        <div class="card tight">
+        <div class="card tight catalog-card" data-name="${s.name.toLowerCase()}" data-id="${s.id.toLowerCase()}">
           <div class="row" style="justify-content:space-between"><div><b>${s.name}</b><br/><code class="dim">${s.id}</code></div>
             <div style="text-align:right">${pr.steamDiscountPct?`<span class="tag warn">Steam −${pr.steamDiscountPct}%</span>`:''}</div>
           </div>
@@ -1458,6 +1464,7 @@ function viewPubCatalog(){
         </div>`;
       }).join('')}
     </div>
+    <p class="muted" id="catalog-empty" style="display:none;text-align:center;padding:24px 0">No titles match your search.</p>
   `;
 }
 
@@ -1819,7 +1826,7 @@ function execPerf(){
 // in UCubix. Suppliers = publishers; Customers = resellers. No Phase-2 fields.
 let snapFilter = { period:'30d', sku:'', customer:'', supplier:'' };
 // Compare mode: dim '' = off, 'supplier' = publisher-vs-publisher, 'customer' = customer-vs-customer.
-let snapCompare = { dim:'', a:'', b:'' };
+let snapCompare = { dim:'', a:'', b:'', c:'' };
 
 // ---- Period engine: rolling windows + fiscal-year ranges ----
 // Epicsoft FY starts 1 April, named by the ENDING year: FY27 = 1 Apr 2026 → 31 Mar 2027.
@@ -2017,6 +2024,7 @@ function viewEpicSnapshot(){
     : cmpDim==='customer' ? RESELLERS.map(r=>({id:r.id,name:r.name})) : [];
   const cmpAId = snapCompare.a || cmpEntities[0]?.id || '';
   const cmpBId = snapCompare.b || cmpEntities[1]?.id || cmpEntities[0]?.id || '';
+  const cmpCId = snapCompare.c || cmpEntities[2]?.id || cmpEntities[0]?.id || '';
   const cmpWord = cmpDim==='supplier' ? 'Publisher' : 'Customer';
 
   // Shared filter bar — single-entity filters in normal mode, A/B pickers in compare mode.
@@ -2025,6 +2033,7 @@ function viewEpicSnapshot(){
           ${ cmpDim ? `
           <div class="fld"><label>${cmpWord} A</label><select id="snap-cmp-a">${cmpEntities.map(e=>opt(e.id,e.name,cmpAId)).join('')}</select></div>
           <div class="fld"><label>${cmpWord} B</label><select id="snap-cmp-b">${cmpEntities.map(e=>opt(e.id,e.name,cmpBId)).join('')}</select></div>
+          <div class="fld"><label>${cmpWord} C</label><select id="snap-cmp-c">${opt('','— none —',cmpCId)}${cmpEntities.map(e=>opt(e.id,e.name,cmpCId)).join('')}</select></div>
           ` : `
           <div class="fld"><label>Game</label><select id="snap-sku">${opt('','All games',snapFilter.sku)}${allSkus.map(s=>opt(s.id,s.name,snapFilter.sku)).join('')}</select></div>
           <div class="fld"><label>Customer</label><select id="snap-customer">${opt('','All customers',snapFilter.customer)}${RESELLERS.map(r=>opt(r.id,r.name,snapFilter.customer)).join('')}</select></div>
@@ -2091,32 +2100,34 @@ function viewEpicSnapshot(){
   if(cmpDim){
     const nameOf = id => cmpEntities.find(e=>e.id===id)?.name || id;
     const pick = id => deliveredAll.filter(o => cmpDim==='supplier' ? o.supplier===id : o.reseller===id);
-    const A = metricsFor(pick(cmpAId));
-    const B = metricsFor(pick(cmpBId));
-    let lead;
-    if(A.revenue || B.revenue){
-      const aWins = A.revenue >= B.revenue;
-      const hi = aWins?A:B, lo = aWins?B:A;
-      const hiN = nameOf(aWins?cmpAId:cmpBId), loN = nameOf(aWins?cmpBId:cmpAId);
-      const pc = lo.revenue>0 ? ((hi.revenue-lo.revenue)/lo.revenue*100) : null;
-      lead = pc===null
-        ? `<b>${hiN}</b> made all the revenue here — ${money(hi.revenue)} vs ${money(lo.revenue)}.`
-        : `<b>${hiN}</b> leads <b>${loN}</b> by ${pc.toFixed(0)}% on revenue — ${money(hi.revenue)} vs ${money(lo.revenue)}.`;
-    } else {
-      lead = 'No sales for either in this period.';
-    }
+    // Build the set of entities being compared (C optional, and de-duped so the same one isn't shown twice).
+    const ids = [cmpAId, cmpBId, cmpCId].filter((id,i,arr)=> id && arr.indexOf(id)===i);
+    const cols = ids.map(id => ({ id, name:nameOf(id), m:metricsFor(pick(id)) }));
     const ico = cmpDim==='supplier'?'🏢':'🤝';
-    // Each cell highlights the bigger of the two so the winner per row reads at a glance.
-    const cell = (mine, other, fmt) => `<td class="v ${mine>=other?'win':''}">${fmt(mine)}</td>`;
+    // Per-metric leader (max across the compared entities) so each row highlights the winner.
+    const maxOf = key => Math.max(...cols.map(c=>c.m[key]), 0);
+    const maxRev = maxOf('revenue'), maxUnits = maxOf('units'), maxAov = maxOf('avgOrder');
+    let lead;
+    if(maxRev>0){
+      const ranked = [...cols].sort((a,b)=>b.m.revenue-a.m.revenue);
+      const hi = ranked[0], lo = ranked[ranked.length-1];
+      const pc = lo.m.revenue>0 ? ((hi.m.revenue-lo.m.revenue)/lo.m.revenue*100) : null;
+      lead = pc===null
+        ? `<b>${hi.name}</b> leads on revenue with ${money(hi.m.revenue)}.`
+        : `<b>${hi.name}</b> leads with ${money(hi.m.revenue)} — ${pc.toFixed(0)}% ahead of <b>${lo.name}</b> (${money(lo.m.revenue)}).`;
+    } else {
+      lead = 'No sales for any selected in this period.';
+    }
+    const cell = (val, isMax, fmt) => `<td class="v ${val>=isMax && val>0 ?'win':''}">${fmt(val)}</td>`;
     bottomHtml = `
       <div class="snap-cmp-lead">${lead}</div>
       <div class="card snap-cmp-card">
         <table class="snap-cmp-table">
-          <thead><tr><th>Head-to-head</th><th>${ico} ${nameOf(cmpAId)}</th><th>${ico} ${nameOf(cmpBId)}</th></tr></thead>
+          <thead><tr><th>Head-to-head</th>${cols.map(c=>`<th>${ico} ${c.name}</th>`).join('')}</tr></thead>
           <tbody>
-            <tr><td>Revenue</td>${cell(A.revenue,B.revenue,money)}${cell(B.revenue,A.revenue,money)}</tr>
-            <tr><td>Units sold</td>${cell(A.units,B.units,num)}${cell(B.units,A.units,num)}</tr>
-            <tr><td>Avg order</td>${cell(A.avgOrder,B.avgOrder,money)}${cell(B.avgOrder,A.avgOrder,money)}</tr>
+            <tr><td>Revenue</td>${cols.map(c=>cell(c.m.revenue,maxRev,money)).join('')}</tr>
+            <tr><td>Units sold</td>${cols.map(c=>cell(c.m.units,maxUnits,num)).join('')}</tr>
+            <tr><td>Avg order</td>${cols.map(c=>cell(c.m.avgOrder,maxAov,money)).join('')}</tr>
           </tbody>
         </table>
       </div>`;
@@ -3876,6 +3887,24 @@ function attachDynamicHandlers(){
   // Publisher home period selector
   const pubP = document.getElementById('pub-period');
   if(pubP) pubP.addEventListener('change', e=>{ pubFilter.period = e.target.value; renderAll(); });
+  // Catalog game search — filter cards live, no re-render
+  const catS = document.getElementById('catalog-search');
+  if(catS){
+    catS.addEventListener('input', e=>{
+      const q = e.target.value.trim().toLowerCase();
+      const cards = document.querySelectorAll('#catalog-grid .catalog-card');
+      let shown = 0;
+      cards.forEach(c=>{
+        const hit = !q || c.dataset.name.includes(q) || c.dataset.id.includes(q);
+        c.style.display = hit ? '' : 'none';
+        if(hit) shown++;
+      });
+      const cnt = document.getElementById('catalog-count');
+      const empty = document.getElementById('catalog-empty');
+      if(cnt) cnt.textContent = q ? `${shown} of ${cards.length} titles` : `${cards.length} titles — type to filter`;
+      if(empty) empty.style.display = shown===0 ? 'block' : 'none';
+    });
+  }
   // Business Snapshot filters
   const snP = document.getElementById('snap-period');
   const snG = document.getElementById('snap-sku');
@@ -3886,25 +3915,28 @@ function attachDynamicHandlers(){
   if(snG) snG.addEventListener('change', e=>{ snapFilter.sku = e.target.value; renderAll(); });
   if(snC) snC.addEventListener('change', e=>{ snapFilter.customer = e.target.value; renderAll(); });
   if(snS) snS.addEventListener('change', e=>{ snapFilter.supplier = e.target.value; renderAll(); });
-  if(snR) snR.addEventListener('click', ()=>{ snapFilter = { period:'30d', sku:'', customer:'', supplier:'' }; snapCompare = { dim:'', a:'', b:'' }; renderAll(); });
+  if(snR) snR.addEventListener('click', ()=>{ snapFilter = { period:'30d', sku:'', customer:'', supplier:'' }; snapCompare = { dim:'', a:'', b:'', c:'' }; renderAll(); });
   // Compare-mode dropdowns
   const snCD = document.getElementById('snap-cmp-dim');
   const snCA = document.getElementById('snap-cmp-a');
   const snCB = document.getElementById('snap-cmp-b');
+  const snCC = document.getElementById('snap-cmp-c');
   if(snCD) snCD.addEventListener('change', e=>{
     snapCompare.dim = e.target.value;
-    // Default A/B to the first two entities of the chosen dimension.
+    // Default A/B/C to the first three entities of the chosen dimension.
     const list = snapCompare.dim==='supplier' ? Object.keys(STATE.publishers)
                : snapCompare.dim==='customer' ? RESELLERS.map(r=>r.id) : [];
     snapCompare.a = list[0] || '';
     snapCompare.b = list[1] || list[0] || '';
-    // Compare drills into two entities, so the single-entity filters don't apply — clear them
+    snapCompare.c = list[2] || '';
+    // Compare drills into entities, so the single-entity filters don't apply — clear them
     // and the hero KPIs keep showing the overall period.
     if(snapCompare.dim){ snapFilter.sku=''; snapFilter.customer=''; snapFilter.supplier=''; }
     renderAll();
   });
   if(snCA) snCA.addEventListener('change', e=>{ snapCompare.a = e.target.value; renderAll(); });
   if(snCB) snCB.addEventListener('change', e=>{ snapCompare.b = e.target.value; renderAll(); });
+  if(snCC) snCC.addEventListener('change', e=>{ snapCompare.c = e.target.value; renderAll(); });
 
   // Pricing filters
   const pSku = document.getElementById('pricing-sku');
