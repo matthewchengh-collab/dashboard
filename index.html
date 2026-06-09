@@ -933,6 +933,7 @@ const TABS = {
       { id:'pub-pricing',  label:'Pricing & WSP',  ico:'$' },
       { id:'pub-catalog',  label:'Catalog',        ico:'☷' },
       { id:'pub-sellthru', label:'Sell-thru',      ico:'⇥' },
+      { id:'pub-reach',    label:'Reseller Reach', ico:'🤝' },
       { id:'pub-feedback', label:'Sales Feedback', ico:'✎' },
     ]},
     { group:'Operations', items:[
@@ -1359,13 +1360,85 @@ function viewPubSellthru(){
   `;
 }
 
+// ---- PUBLISHER: RESELLER REACH (channel coverage, from real order data) ----
+function viewPubReach(){
+  const d = pubData();
+  const internal = document.body.dataset.phase==='2';
+  const delivered = d.orders.filter(isDelivered);
+  const totalRev = delivered.reduce((a,o)=>a+o.unitPriceUSD*o.qty,0)||1;
+
+  const byRes = {};
+  delivered.forEach(o=>{
+    const r = byRes[o.reseller] || (byRes[o.reseller] = { id:o.reseller, name:resellerName(o.reseller), tier:resellerTier(o.reseller), rev:0, units:0, countries:new Set(), skus:new Set() });
+    r.rev += o.unitPriceUSD*o.qty; r.units += o.qty; r.countries.add(o.country); r.skus.add(o.sku);
+  });
+  const resRows = Object.values(byRes).sort((a,b)=>b.rev-a.rev);
+
+  const byCtry = {};
+  delivered.forEach(o=>{
+    const c = byCtry[o.country] || (byCtry[o.country] = { rev:0, resellers:new Set() });
+    c.rev += o.unitPriceUSD*o.qty; c.resellers.add(o.reseller);
+  });
+  const ctryRows = Object.entries(byCtry).sort((a,b)=>b[1].rev-a[1].rev);
+  const coveredCtry = Object.keys(byCtry).length;
+
+  return `
+    <h2>Reseller Reach ${ticket('UCBX-494', internal)}</h2>
+    <p class="sub">Which resellers carry your titles, and where. Built from delivered-order data — no Phase-2 fields.</p>
+
+    <div class="grid cols-4" style="margin-bottom:16px">
+      ${kpi('Active resellers', num(resRows.length), {delta:'carrying your titles', deltaClass:'flat'})}
+      ${kpi('Countries reached', `${coveredCtry} of ${COUNTRIES.length}`, {delta: coveredCtry<COUNTRIES.length?`${COUNTRIES.length-coveredCtry} untapped`:'full coverage', deltaClass: coveredCtry<COUNTRIES.length?'flat':'up'})}
+      ${kpi('Titles in market', num(new Set(delivered.map(o=>o.sku)).size), {delta:'SKUs with sales', deltaClass:'flat'})}
+      ${kpi('Top reseller share', resRows.length?Math.round(resRows[0].rev/totalRev*100)+'%':'—', {delta: resRows.length?resRows[0].name:'', deltaClass:'flat'})}
+    </div>
+
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="row" style="margin-bottom:10px"><h3>Resellers carrying your titles</h3></div>
+        ${bareTable(['Reseller','Tier','Countries','Titles','Revenue','Share'], resRows, r=>`<tr>
+          <td>${r.name}</td>
+          <td><span class="tag">${r.tier}</span></td>
+          <td class="num">${r.countries.size}</td>
+          <td class="num">${r.skus.size}</td>
+          <td class="num">${money(r.rev)}</td>
+          <td class="num">${(r.rev/totalRev*100).toFixed(1)}%</td>
+        </tr>`, {empty:'No reseller sales yet.'})}
+      </div>
+      <div class="card">
+        <div class="row" style="margin-bottom:10px"><h3>Country coverage</h3></div>
+        ${bareTable(['Country','Resellers','Revenue','Share'], ctryRows, ([c,v])=>`<tr>
+          <td>${REGIONS[c]?.name||c} <span class="tag">${c}</span></td>
+          <td class="num">${v.resellers.size}</td>
+          <td class="num">${money(v.rev)}</td>
+          <td class="num">${(v.rev/totalRev*100).toFixed(1)}%</td>
+        </tr>`, {empty:'No country data.'})}
+      </div>
+    </div>
+  `;
+}
+
 // ---- PUBLISHER: CATALOG ---------------------------------------------
 function viewPubCatalog(){
   const d = pubData();
   const internal = document.body.dataset.phase==='2';
+  // ---- Price health summary (UCBX-506 — real cards on Product Variants) ----
+  const allPrices = d.skus.flatMap(s=>Object.values(s.prices));
+  const visible   = d.skus.length;                                   // reseller-visible variants
+  const discounted= d.skus.filter(s=>Object.values(s.prices).some(p=>p.steamDiscountPct>0)).length;
+  const outdated  = d.skus.filter(s=>Object.values(s.prices).some(p=>(Date.now()-p.lastSyncAt) > 7*86400000)).length;
+
   return `
-    <h2>Catalog ${ticket('UCBX-472', internal)}</h2>
+    <h2>Catalog ${ticket('UCBX-472', internal)} ${ticket('UCBX-506', internal)}</h2>
     <p class="sub">Your full SKU inventory across all resellers. Steam live discount indicator prevents accidental double-discounting.</p>
+
+    <div class="grid cols-4" style="margin-bottom:16px">
+      ${kpi('Reseller Visible', num(visible),    {delta:'live on storefront', deltaClass:'flat'})}
+      ${kpi('Outdated Prices',  num(outdated),   {delta: outdated>0?'needs Steam re-sync':'all fresh', deltaClass: outdated>0?'down':'flat'})}
+      ${kpi('Discounted',       num(discounted), {delta:'Steam discount active', deltaClass:'flat'})}
+      ${kpi('Price Health',     visible?Math.round((visible-outdated)/visible*100)+'%':'—', {delta:'fresh ÷ visible', deltaClass:'flat'})}
+    </div>
+    <p class="muted internal-only" style="margin:-6px 0 14px;font-size:11.5px">⚠ UCBX-506 in testing: outdated-flag accuracy depends on per-price last_sync (UCBX-480), not yet shipped — counts are indicative.</p>
 
     <div class="grid cols-3">
       ${d.skus.map(s=>{
@@ -3726,6 +3799,7 @@ const VIEWS = {
   'pub-pricing':  viewPubPricing,
   'pub-sellthru': viewPubSellthru,
   'pub-catalog':  viewPubCatalog,
+  'pub-reach':    viewPubReach,
   'pub-feedback': viewPubFeedback,
   'pub-returns':  viewPubReturns,
   'pub-supply':   viewPubSupply,
