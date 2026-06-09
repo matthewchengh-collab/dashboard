@@ -352,18 +352,22 @@
   .toast .arrow{color:var(--accent);font-weight:600}
 
   /* MODAL ============================================================== */
-  /* Chip multi-select filter */
-  .chipsel{position:relative;min-width:180px}
-  .chipsel .box{display:flex;flex-wrap:wrap;gap:5px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 6px;min-height:34px;cursor:text}
-  .chipsel .chip{display:inline-flex;align-items:center;gap:5px;background:var(--accent-soft);color:var(--accent-dark);border:1px solid #93c5fd;border-radius:4px;padding:2px 6px;font-size:12px;font-weight:600;white-space:nowrap}
-  .chipsel .chip b{font-weight:700;opacity:.7;cursor:pointer;font-size:13px;line-height:1}
-  .chipsel .ph{color:var(--dim);font-size:13px;padding:2px 4px}
-  .chipsel .pop{position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-lg);max-height:240px;overflow-y:auto;z-index:30;display:none}
+  /* Multi-select filter — summary box + checkbox dropdown */
+  .chipsel{position:relative;min-width:170px}
+  .chipsel .box.summary{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:7px 10px;min-height:34px;cursor:pointer;font-size:13px;color:var(--text)}
+  .chipsel .box .sum{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chipsel .box .ph{color:var(--dim)}
+  .chipsel .box .caret{color:var(--dim);font-size:11px;flex-shrink:0}
+  .chipsel.open .box.summary{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+  .chipsel .pop{position:absolute;top:calc(100% + 4px);left:0;right:0;min-width:200px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-lg);max-height:260px;overflow-y:auto;z-index:30;display:none}
   .chipsel.open .pop{display:block}
-  .chipsel .pop .it{padding:7px 10px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+  .chipsel .pop .it{padding:8px 10px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:9px;border-bottom:1px solid var(--line)}
   .chipsel .pop .it:hover{background:var(--sidebar-hover)}
-  .chipsel .pop .it.on{background:var(--accent-soft);color:var(--accent-dark);font-weight:600}
+  .chipsel .pop .it.on{background:var(--accent-soft);color:var(--accent-dark)}
   .chipsel .pop .it:last-child{border-bottom:none}
+  .chipsel .pop .it.clr{justify-content:center;color:var(--muted);font-weight:600;font-size:12px}
+  .chipsel .cbx{width:16px;height:16px;border-radius:3px;border:1.5px solid var(--line2);background:var(--panel);display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;flex-shrink:0}
+  .chipsel .cbx.on{background:var(--accent);border-color:var(--accent)}
   .modal-bg{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(4px);z-index:50;align-items:center;justify-content:center}
   .modal-bg.on{display:flex}
   .modal.wide{width:min(820px,94vw);max-height:88vh;overflow:auto}
@@ -2099,19 +2103,30 @@ function chipSelect(id, label, options, selected){
   CHIP_REG[id] = { options };
   const sel = selected || [];
   const labelOf = v => (options.find(o=>o[0]===v)||[v,v])[1];
-  const chips = sel.length
-    ? sel.map(v=>`<span class="chip">${labelOf(v)}<b onclick="event.stopPropagation();chipRemove('${id}','${v}')">×</b></span>`).join('')
-    : `<span class="ph">All ${label.toLowerCase()}</span>`;
-  const items = options.map(([v,l])=>`<div class="it ${sel.includes(v)?'on':''}" onclick="event.stopPropagation();chipToggle('${id}','${v}')">${sel.includes(v)?'✓':'&nbsp;&nbsp;'} ${l}</div>`).join('');
+  // Box shows a summary: "All", one name, or "N selected".
+  const summary = sel.length===0 ? `<span class="ph">All ${label.toLowerCase()}</span>`
+    : sel.length===1 ? `<span class="sum">${labelOf(sel[0])}</span>`
+    : `<span class="sum">${sel.length} selected</span>`;
+  // Checkbox rows inside the dropdown; clicking toggles and keeps the dropdown OPEN.
+  const items = options.map(([v,l])=>{
+    const on = sel.includes(v);
+    return `<div class="it ${on?'on':''}" onclick="event.stopPropagation();chipToggle('${id}','${v}')">
+      <span class="cbx ${on?'on':''}">${on?'✓':''}</span>${l}</div>`;
+  }).join('');
+  const clear = sel.length ? `<div class="it clr" onclick="event.stopPropagation();chipClear('${id}')">Clear all</div>` : '';
   return `<div class="fld"><label>${label}</label>
     <div class="chipsel" id="${id}">
-      <div class="box" onclick="chipOpen('${id}')">${chips}</div>
-      <div class="pop">${items}</div>
+      <div class="box summary" onclick="chipOpen('${id}')">${summary}<span class="caret">▾</span></div>
+      <div class="pop">${items}${clear}</div>
     </div></div>`;
 }
 function chipOpen(id){ const el=document.getElementById(id); if(!el)return; const wasOpen=el.classList.contains('open'); document.querySelectorAll('.chipsel.open').forEach(x=>x.classList.remove('open')); if(!wasOpen) el.classList.add('open'); }
-function chipToggle(id, val){ const r=CHIP_REG[id]; if(!r||!r.set)return; const cur=r.get(); r.set(cur.includes(val)?cur.filter(x=>x!==val):[...cur,val]); }
-function chipRemove(id, val){ const r=CHIP_REG[id]; if(!r||!r.set)return; r.set(r.get().filter(x=>x!==val)); }
+// Toggle a value but keep the dropdown open so multiple can be picked in one go.
+function chipToggle(id, val){ const r=CHIP_REG[id]; if(!r||!r.set)return; const cur=r.get(); const next=cur.includes(val)?cur.filter(x=>x!==val):[...cur,val]; r.set(next); reopenChip(id); }
+function chipClear(id){ const r=CHIP_REG[id]; if(!r||!r.set)return; r.set([]); reopenChip(id); }
+// After a re-render (renderAll), re-open the same dropdown so the user can keep ticking.
+let _reopenChip = null;
+function reopenChip(id){ _reopenChip = id; }
 document.addEventListener('click', e=>{ if(!e.target.closest('.chipsel')) document.querySelectorAll('.chipsel.open').forEach(x=>x.classList.remove('open')); });
 
 // Tiny inline revenue sparkline (white line on the gradient card).
@@ -4228,6 +4243,8 @@ function attachDynamicHandlers(){
   document.querySelectorAll('[data-execperiod]').forEach(b=>{
     b.addEventListener('click', e=>{ execPeriod=e.currentTarget.dataset.execperiod; renderAll(); });
   });
+  // Re-open a chip dropdown after a re-render so multiple picks happen without re-clicking.
+  if(_reopenChip){ const el=document.getElementById(_reopenChip); if(el) el.classList.add('open'); _reopenChip=null; }
 }
 
 // =====================================================================
