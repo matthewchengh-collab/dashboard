@@ -1839,9 +1839,13 @@ function snapCurrentFy(now){
 }
 // Resolve a period key to an explicit window. prevStart=null means "no prior window" (All time).
 function snapResolvePeriod(key){
-  const now = Date.now(), DAY = 86400000;
+  const now = Date.now(), DAY = 86400000, NOW = new Date(now);
   const roll = (ms,label,prevLabel)=>({label, start:now-ms, end:now, prevStart:now-2*ms, prevEnd:now-ms, prevLabel});
+  // Calendar-range helper: [start,end) for the period containing `now`, plus the immediately prior same-length calendar window.
+  const cal = (start, end, prevStart, prevEnd, label, prevLabel)=>({label, start:start.getTime(), end:end.getTime(), prevStart:prevStart.getTime(), prevEnd:prevEnd.getTime(), prevLabel});
+  const Y = NOW.getFullYear(), M = NOW.getMonth();
   switch(key){
+    // --- rolling windows ---
     case 'today': return roll(DAY,'Today','yesterday');
     case '7d':    return roll(7*DAY,'Last 7 days','last 7 days');
     case '30d':   return roll(30*DAY,'Last 30 days','last 30 days');
@@ -1849,25 +1853,21 @@ function snapResolvePeriod(key){
     case '90d':   return roll(90*DAY,'Last 90 days','last 90 days');
     case '120d':  return roll(120*DAY,'Last 120 days','last 120 days');
     case '1y':    return roll(365*DAY,'Last 12 months','prior 12 months');
+    // --- calendar periods ---
+    case 'mtd':   return cal(new Date(Y,M,1), NOW, new Date(Y,M-1,1), new Date(Y,M-1,NOW.getDate()), 'This month', 'same point last month');
+    case 'lastmonth': return cal(new Date(Y,M-1,1), new Date(Y,M,1), new Date(Y,M-2,1), new Date(Y,M-1,1), 'Last month', 'month before');
+    case 'qtd':   { const q=Math.floor(M/3); return cal(new Date(Y,q*3,1), NOW, new Date(Y,(q-1)*3,1), new Date(Y,q*3,1), 'This quarter', 'last quarter'); }
+    case 'lastquarter': { const q=Math.floor(M/3); return cal(new Date(Y,(q-1)*3,1), new Date(Y,q*3,1), new Date(Y,(q-2)*3,1), new Date(Y,(q-1)*3,1), 'Last quarter', 'quarter before'); }
+    case 'ytd':   return cal(new Date(Y,0,1), NOW, new Date(Y-1,0,1), new Date(Y-1,M,NOW.getDate()), 'This year', 'same point last year');
     case 'all':   return {label:'All time', start:0, end:now, prevStart:null, prevEnd:null, prevLabel:''};
-  }
-  const m = /^fy(\d+)$/.exec(key);
-  if(m){
-    const n = +m[1], w = snapFyWindow(n);
-    const end = Math.min(w.end, now);                 // current FY only counts up to "now"
-    const prev = snapFyWindow(n-1);
-    return { label:`FY${n}`, start:w.start, end,
-             prevStart:prev.start, prevEnd:prev.start + (end - w.start),  // prior FY to the same point
-             prevLabel:`FY${n-1}` };
   }
   return roll(30*DAY,'Last 30 days','last 30 days');
 }
-// Dropdown options: rolling windows, then the 3 most recent fiscal years, then all-time.
+// Dropdown options: rolling windows, calendar periods, then all-time. (No fiscal year.)
 function snapPeriodOptions(){
-  const fy = snapCurrentFy(Date.now());
   return [['today','Today'],['7d','Last 7 days'],['30d','Last 30 days'],['60d','Last 60 days'],
           ['90d','Last 90 days'],['120d','Last 120 days'],['1y','Last 12 months'],
-          [`fy${fy}`,`FY${fy} (this FY)`],[`fy${fy-1}`,`FY${fy-1}`],[`fy${fy-2}`,`FY${fy-2}`],
+          ['mtd','This month'],['lastmonth','Last month'],['qtd','This quarter'],['lastquarter','Last quarter'],['ytd','This year'],
           ['all','All time']];
 }
 
