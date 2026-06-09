@@ -1167,7 +1167,7 @@ function viewPubHome(){
         <div class="row" style="margin-bottom:10px"><h3>Country Split (USD)</h3><span class="spacer"></span>${ticket('CTRY', internal)}</div>
         <p class="sub" style="margin-bottom:14px">Country-level granularity per supplier API schema (TH ≠ VN within SEA region).</p>
         ${bareTable(['Country','Units Sold','Revenue','Share'], Object.entries(byCountry).sort((a,b)=>b[1].rev-a[1].rev), ([c,v])=>`<tr>
-          <td>${REGIONS[c].name} <span class="tag">${c}</span></td>
+          <td style="cursor:pointer" onclick="location.hash='country/${c}'">${REGIONS[c].name} <span class="tag">${c}</span></td>
           <td class="num">${num(v.units)}</td>
           <td class="num">${money(v.rev)}</td>
           <td class="num">${(v.rev/totalCountry*100).toFixed(1)}%</td>
@@ -1436,6 +1436,126 @@ function viewSkuDetail(id){
     ${skuBreakdownBody(s, d)}`;
 }
 
+// ---- Shared detail helpers (country / reseller / region span all publishers) ----
+function allDelivered(){
+  const out = [];
+  Object.entries(STATE.publishers).forEach(([code,p])=>{
+    const nameOf = id => p.skus.find(s=>s.id===id)?.name || id;
+    p.orders.forEach(o=>{ if(isDelivered(o)) out.push({...o, pub:code, skuName:nameOf(o.sku)}); });
+  });
+  return out;
+}
+function costOfOrder(o){ const p=STATE.publishers[o.pub]; const s=p?.skus.find(x=>x.id===o.sku); return (s?.prices[o.country]?.estimatedCost||0)*o.qty; }
+function detailHeader(title, sub, hashKey){
+  const link = `${location.origin}${location.pathname}#${hashKey}`;
+  return `
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px;flex-wrap:wrap">
+      <button class="btn ghost" onclick="location.hash=''">← Back</button>
+      <button class="btn ghost" onclick="navigator.clipboard&&navigator.clipboard.writeText('${link}');this.textContent='✓ Link copied';setTimeout(()=>this.textContent='⧉ Copy link',1500)">⧉ Copy link</button>
+    </div>
+    <h2 style="margin:0">${title}</h2>
+    <p class="sub">${sub}</p>`;
+}
+// Build KPIs + 12-week trend + 3 breakdown tables from a filtered order set.
+function entityBreakdown(ords, opts){
+  const units = ords.reduce((a,o)=>a+o.qty,0);
+  const rev   = ords.reduce((a,o)=>a+o.unitPriceUSD*o.qty,0);
+  const cogs  = ords.reduce((a,o)=>a+costOfOrder(o),0);
+  const gp = rev-cogs, gmPct = rev?gp/rev*100:0;
+  const WK=7*86400000, NW=12, now=Date.now(), wk=new Array(NW).fill(0);
+  ords.forEach(o=>{ const i=NW-1-Math.floor((now-o.createdAt)/WK); if(i>=0&&i<NW) wk[i]+=o.unitPriceUSD*o.qty; });
+  const trendPts = wk.map((v,i)=>({label:i===0?'12w ago':(i===NW-1?'now':''), v:Math.round(v)}));
+  const recent = [...ords].sort((a,b)=>b.createdAt-a.createdAt).slice(0,8);
+  // generic roll helper
+  const roll = keyFn => { const m={}; ords.forEach(o=>{ const k=keyFn(o); const x=m[k]||(m[k]={units:0,rev:0}); x.units+=o.qty; x.rev+=o.unitPriceUSD*o.qty; }); return Object.entries(m).sort((a,b)=>b[1].rev-a[1].rev); };
+  return { units, rev, gp, gmPct, trendPts, recent, roll };
+}
+
+// ---- COUNTRY detail (#country/PH) ----
+function viewCountryDetail(c){
+  if(!REGIONS[c]) return `<p class="muted">Country not found. <a href="#" onclick="location.hash='';return false">← Back</a></p>`;
+  const ords = allDelivered().filter(o=>o.country===c);
+  const b = entityBreakdown(ords);
+  const topGames = b.roll(o=>o.skuName).slice(0,10);
+  const topRes = b.roll(o=>o.reseller).slice(0,10);
+  return `
+    ${detailHeader(REGIONS[c].name, `Country · ${c} · ${REGIONS[c].region} · ${REGIONS[c].curr} · all-time delivered`, `country/${c}`)}
+    <div class="grid cols-4" style="margin:12px 0">
+      ${kpi('Units sold', num(b.units), {delta:`${ords.length} orders`, deltaClass:'flat'})}
+      ${kpi('Revenue', money(b.rev), {delta:'all-time', deltaClass:'flat'})}
+      ${kpi('Gross profit', money(b.gp), {delta:b.gmPct.toFixed(1)+'% margin', deltaClass:b.gmPct>=15?'up':'flat'})}
+      ${kpi('Resellers here', num(new Set(ords.map(o=>o.reseller)).size), {delta:'active', deltaClass:'flat'})}
+    </div>
+    <h3 style="margin:14px 0 6px">Revenue trend — last 12 weeks</h3>
+    <div class="card" style="padding:12px 14px">${trendChart(b.trendPts,{valFmt:v=>money(v)})}</div>
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card"><h3 style="margin-bottom:8px">Top games in ${REGIONS[c].name}</h3>
+      ${bareTable(['Game','Units','Revenue'], topGames, ([n,v])=>`<tr><td>${n}</td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td></tr>`,{empty:'No sales.'})}</div>
+      <div class="card"><h3 style="margin-bottom:8px">Top resellers in ${REGIONS[c].name}</h3>
+      ${bareTable(['Reseller','Tier','Units','Revenue'], topRes, ([r,v])=>`<tr><td>${resellerName(r)}</td><td><span class="tag">${resellerTier(r)}</span></td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td></tr>`,{empty:'No sales.'})}</div>
+    </div>
+    <h3 style="margin:16px 0 6px">Recent orders</h3>
+    ${bareTable(['Order','Game','Reseller','Qty','Total'], b.recent, o=>`<tr><td><code class="dim">${o.id}</code></td><td>${o.skuName}</td><td>${resellerName(o.reseller)}</td><td class="num">${o.qty}</td><td class="num">${money(o.unitPriceUSD*o.qty)}</td></tr>`,{empty:'No recent orders.'})}`;
+}
+
+// ---- RESELLER detail (#reseller/res-x) ----
+function viewResellerDetail(id){
+  const r = RESELLERS.find(x=>x.id===id);
+  if(!r) return `<p class="muted">Reseller not found. <a href="#" onclick="location.hash='';return false">← Back</a></p>`;
+  const ords = allDelivered().filter(o=>o.reseller===id);
+  const b = entityBreakdown(ords);
+  const topGames = b.roll(o=>o.skuName).slice(0,10);
+  const byCtry = b.roll(o=>o.country).slice(0,10);
+  return `
+    ${detailHeader(r.name, `Reseller · Tier ${r.tier} · ${r.region} · all-time delivered`, `reseller/${id}`)}
+    <div class="grid cols-4" style="margin:12px 0">
+      ${kpi('Units bought', num(b.units), {delta:`${ords.length} orders`, deltaClass:'flat'})}
+      ${kpi('Revenue', money(b.rev), {delta:'all-time', deltaClass:'flat'})}
+      ${kpi('Gross profit', money(b.gp), {delta:b.gmPct.toFixed(1)+'% margin', deltaClass:b.gmPct>=15?'up':'flat'})}
+      ${kpi('Countries served', num(new Set(ords.map(o=>o.country)).size), {delta:'markets', deltaClass:'flat'})}
+    </div>
+    <h3 style="margin:14px 0 6px">Revenue trend — last 12 weeks</h3>
+    <div class="card" style="padding:12px 14px">${trendChart(b.trendPts,{valFmt:v=>money(v)})}</div>
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card"><h3 style="margin-bottom:8px">Top games ${r.name} buys</h3>
+      ${bareTable(['Game','Units','Revenue'], topGames, ([n,v])=>`<tr><td>${n}</td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td></tr>`,{empty:'No sales.'})}</div>
+      <div class="card"><h3 style="margin-bottom:8px">Countries served</h3>
+      ${bareTable(['Country','Units','Revenue'], byCtry, ([c,v])=>`<tr><td>${REGIONS[c]?.name||c} <span class="tag">${c}</span></td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td></tr>`,{empty:'No sales.'})}</div>
+    </div>
+    <h3 style="margin:16px 0 6px">Recent orders</h3>
+    ${bareTable(['Order','Game','Country','Qty','Total'], b.recent, o=>`<tr><td><code class="dim">${o.id}</code></td><td>${o.skuName}</td><td>${o.country}</td><td class="num">${o.qty}</td><td class="num">${money(o.unitPriceUSD*o.qty)}</td></tr>`,{empty:'No recent orders.'})}`;
+}
+
+// ---- REGION detail (#region/SEA) ----
+function viewRegionDetail(rg){
+  const names = { SEA:'Southeast Asia', NEA:'Northeast Asia' };
+  const countries = COUNTRIES.filter(c=>REGIONS[c].region===rg);
+  if(!countries.length) return `<p class="muted">Region not found. <a href="#" onclick="location.hash='';return false">← Back</a></p>`;
+  const ords = allDelivered().filter(o=>REGIONS[o.country]?.region===rg);
+  const b = entityBreakdown(ords);
+  const byCtry = b.roll(o=>o.country).slice(0,10);
+  const topGames = b.roll(o=>o.skuName).slice(0,10);
+  const topRes = b.roll(o=>o.reseller).slice(0,10);
+  return `
+    ${detailHeader(names[rg]||rg, `Region · ${rg} · ${countries.length} countries · all-time delivered`, `region/${rg}`)}
+    <div class="grid cols-4" style="margin:12px 0">
+      ${kpi('Units sold', num(b.units), {delta:`${ords.length} orders`, deltaClass:'flat'})}
+      ${kpi('Revenue', money(b.rev), {delta:'all-time', deltaClass:'flat'})}
+      ${kpi('Gross profit', money(b.gp), {delta:b.gmPct.toFixed(1)+'% margin', deltaClass:b.gmPct>=15?'up':'flat'})}
+      ${kpi('Countries', num(countries.length), {delta:countries.join(', '), deltaClass:'flat'})}
+    </div>
+    <h3 style="margin:14px 0 6px">Revenue trend — last 12 weeks</h3>
+    <div class="card" style="padding:12px 14px">${trendChart(b.trendPts,{valFmt:v=>money(v)})}</div>
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card"><h3 style="margin-bottom:8px">By country</h3>
+      ${bareTable(['Country','Units','Revenue'], byCtry, ([c,v])=>`<tr><td style="cursor:pointer" onclick="location.hash='country/${c}'">${REGIONS[c]?.name||c} <span class="tag">${c}</span></td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td></tr>`,{empty:'No sales.'})}</div>
+      <div class="card"><h3 style="margin-bottom:8px">Top games in region</h3>
+      ${bareTable(['Game','Units','Revenue'], topGames, ([n,v])=>`<tr><td>${n}</td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td></tr>`,{empty:'No sales.'})}</div>
+    </div>
+    <h3 style="margin:16px 0 6px">Top resellers in region</h3>
+    ${bareTable(['Reseller','Tier','Units','Revenue'], topRes, ([r,v])=>`<tr><td>${resellerName(r)}</td><td><span class="tag">${resellerTier(r)}</span></td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td></tr>`,{empty:'No sales.'})}`;
+}
+
 // ---- PUBLISHER: RESELLER REACH (channel coverage, from real order data) ----
 function viewPubReach(){
   const d = pubData();
@@ -1472,7 +1592,7 @@ function viewPubReach(){
     <div class="grid cols-2">
       <div class="card">
         <div class="row" style="margin-bottom:10px"><h3>Resellers carrying your titles</h3></div>
-        ${bareTable(['Reseller','Tier','Countries','Titles','Revenue','Share'], resRows, r=>`<tr>
+        ${bareTable(['Reseller','Tier','Countries','Titles','Revenue','Share'], resRows, r=>`<tr style="cursor:pointer" onclick="location.hash='reseller/${r.id}'">
           <td>${r.name}</td>
           <td><span class="tag">${r.tier}</span></td>
           <td class="num">${r.countries.size}</td>
@@ -2260,7 +2380,7 @@ function viewEpicSnapshot(){
         <div class="card snap-board">
           <div class="snap-card-head"><h3>🤝 Top Customers</h3><span class="cnt">${topCust.length} of ${Object.keys(byCust).length}</span></div>
           ${topCust.length ? topCust.map(([id,v],i)=>`
-            <div class="row-item">
+            <div class="row-item" style="cursor:pointer" onclick="location.hash='reseller/${id}'" title="View full breakdown">
               <span class="snap-rank" style="background:${medal(i)};color:${medalText(i)}">${i+1}</span>
               <div style="min-width:0">
                 <div class="snap-name" style="display:flex;align-items:center;gap:6px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${resellerName(id)}</span><span class="tag" style="flex-shrink:0">Tier ${resellerTier(id)}</span></div>
@@ -2273,7 +2393,7 @@ function viewEpicSnapshot(){
         <div class="card snap-board">
           <div class="snap-card-head"><h3>🌏 Top Countries</h3><span class="cnt">${topCtry.length} of ${Object.keys(byCtry).length}</span></div>
           ${topCtry.length ? topCtry.map(([c,v],i)=>`
-            <div class="row-item">
+            <div class="row-item" style="cursor:pointer" onclick="location.hash='country/${c}'" title="View full breakdown">
               <span class="snap-rank" style="background:${medal(i)};color:${medalText(i)}">${i+1}</span>
               <div style="min-width:0">
                 <div class="snap-name" style="display:flex;align-items:center;gap:6px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${REGIONS[c]?.name||c}</span><span class="tag" style="flex-shrink:0">${c}</span><span class="tag" style="flex-shrink:0;opacity:.7">${REGIONS[c]?.region||''}</span></div>
@@ -2286,7 +2406,7 @@ function viewEpicSnapshot(){
         <div class="card snap-board">
           <div class="snap-card-head"><h3>🗺️ Top Regions</h3><span class="cnt">${topRegion.length} region${topRegion.length===1?'':'s'}</span></div>
           ${topRegion.length ? topRegion.map(([rg,v],i)=>`
-            <div class="row-item">
+            <div class="row-item" style="cursor:pointer" onclick="location.hash='region/${rg}'" title="View full breakdown">
               <span class="snap-rank" style="background:${medal(i)};color:${medalText(i)}">${i+1}</span>
               <div style="min-width:0">
                 <div class="snap-name" style="display:flex;align-items:center;gap:6px"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${REGION_NAMES[rg]||rg}</span><span class="tag" style="flex-shrink:0">${rg}</span></div>
@@ -2416,7 +2536,7 @@ function viewEpicHome(){
         <div class="row" style="margin-bottom:10px"><h3>Country Split (USD)</h3><span class="spacer"></span>${internal?ticket('CTRY', true):''}</div>
         <p class="sub" style="margin-bottom:14px">Country-level granularity per supplier API schema (TH ≠ VN within SEA region).</p>
         ${bareTable(['Country','Revenue','Share'], Object.entries(byCountry).sort((a,b)=>b[1]-a[1]), ([c,v])=>`<tr>
-          <td>${REGIONS[c].name} <span class="tag">${c}</span></td>
+          <td style="cursor:pointer" onclick="location.hash='country/${c}'">${REGIONS[c].name} <span class="tag">${c}</span></td>
           <td class="num">${money(v)}</td>
           <td class="num">${(v/totalCountry*100).toFixed(1)}%</td>
         </tr>`)}
@@ -3977,18 +4097,19 @@ const VIEWS = {
   'epic-roadmap':        roadmapView,
 };
 
-let skuRoute = null;  // when set (from #sku/ID), the SKU detail page renders instead of the tab
+let route = null;  // {type:'sku'|'country'|'reseller'|'region', id} — when set, a full-page breakdown renders instead of the tab
+const DETAIL_VIEWS = { sku:viewSkuDetail, country:viewCountryDetail, reseller:viewResellerDetail, region:viewRegionDetail };
 function renderMain(){
   let html;
-  if(skuRoute){ html = viewSkuDetail(skuRoute); }
+  if(route && DETAIL_VIEWS[route.type]){ html = DETAIL_VIEWS[route.type](route.id); }
   else { const view = VIEWS[currentTab] || (()=>'<p>Tab not found</p>'); html = view(); }
   document.getElementById('main').innerHTML = `<section class="view active">${html}</section>`;
   attachDynamicHandlers();
 }
-// Hash routing: #sku/ID opens that SKU's full-page breakdown; empty hash returns to the tab.
+// Hash routing: #<type>/<id> opens that entity's full-page breakdown; empty hash returns to the tab.
 function syncRouteFromHash(){
-  const m = /^#sku\/(.+)$/.exec(location.hash || '');
-  skuRoute = m ? decodeURIComponent(m[1]) : null;
+  const m = /^#(sku|country|reseller|region)\/(.+)$/.exec(location.hash || '');
+  route = m ? { type:m[1], id:decodeURIComponent(m[2]) } : null;
 }
 window.addEventListener('hashchange', ()=>{ syncRouteFromHash(); renderAll(); window.scrollTo(0,0); });
 
