@@ -352,6 +352,18 @@
   .toast .arrow{color:var(--accent);font-weight:600}
 
   /* MODAL ============================================================== */
+  /* Chip multi-select filter */
+  .chipsel{position:relative;min-width:180px}
+  .chipsel .box{display:flex;flex-wrap:wrap;gap:5px;align-items:center;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 6px;min-height:34px;cursor:text}
+  .chipsel .chip{display:inline-flex;align-items:center;gap:5px;background:var(--accent-soft);color:var(--accent-dark);border:1px solid #93c5fd;border-radius:4px;padding:2px 6px;font-size:12px;font-weight:600;white-space:nowrap}
+  .chipsel .chip b{font-weight:700;opacity:.7;cursor:pointer;font-size:13px;line-height:1}
+  .chipsel .ph{color:var(--dim);font-size:13px;padding:2px 4px}
+  .chipsel .pop{position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-lg);max-height:240px;overflow-y:auto;z-index:30;display:none}
+  .chipsel.open .pop{display:block}
+  .chipsel .pop .it{padding:7px 10px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line)}
+  .chipsel .pop .it:hover{background:var(--sidebar-hover)}
+  .chipsel .pop .it.on{background:var(--accent-soft);color:var(--accent-dark);font-weight:600}
+  .chipsel .pop .it:last-child{border-bottom:none}
   .modal-bg{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(4px);z-index:50;align-items:center;justify-content:center}
   .modal-bg.on{display:flex}
   .modal.wide{width:min(820px,94vw);max-height:88vh;overflow:auto}
@@ -1288,16 +1300,16 @@ function renderPricingRows(){
 }
 
 // ---- PUBLISHER: SELL-THRU -------------------------------------------
-let sellFilter = { period:'90d', country:'', reseller:'', sku:'' };
+let sellFilter = { period:'90d', country:[], reseller:[], sku:[] };
 
 function viewPubSellthru(){
   const d = pubData();
   const internal = document.body.dataset.phase==='2';
   const cutoff = sellFilter.period==='30d' ? 30 : sellFilter.period==='90d' ? 90 : 365;
   let orders = d.orders.filter(o => isDelivered(o) && o.deliveredAt > Date.now()-1000*60*60*24*cutoff);
-  if(sellFilter.country) orders = orders.filter(o=>o.country===sellFilter.country);
-  if(sellFilter.reseller) orders = orders.filter(o=>o.reseller===sellFilter.reseller);
-  if(sellFilter.sku) orders = orders.filter(o=>o.sku===sellFilter.sku);
+  if(sellFilter.country.length) orders = orders.filter(o=>sellFilter.country.includes(o.country));
+  if(sellFilter.reseller.length) orders = orders.filter(o=>sellFilter.reseller.includes(o.reseller));
+  if(sellFilter.sku.length) orders = orders.filter(o=>sellFilter.sku.includes(o.sku));
 
   const rows = orders.slice().sort((a,b)=>b.deliveredAt-a.deliveredAt).slice(0,60);
   const total = orders.reduce((a,o)=>a+o.unitPriceUSD*o.qty, 0);
@@ -1315,24 +1327,9 @@ function viewPubSellthru(){
           <option value="365d" ${sellFilter.period==='365d'?'selected':''}>Last 12 months</option>
         </select>
       </div>
-      <div class="ctrl"><label>Country</label>
-        <select id="sf-country">
-          <option value="">All</option>
-          ${COUNTRIES.map(c=>`<option value="${c}" ${sellFilter.country===c?'selected':''}>${REGIONS[c].name}</option>`).join('')}
-        </select>
-      </div>
-      <div class="ctrl"><label>Reseller</label>
-        <select id="sf-reseller">
-          <option value="">All</option>
-          ${RESELLERS.map(r=>`<option value="${r.id}" ${sellFilter.reseller===r.id?'selected':''}>${r.name}</option>`).join('')}
-        </select>
-      </div>
-      <div class="ctrl"><label>SKU</label>
-        <select id="sf-sku">
-          <option value="">All</option>
-          ${d.skus.map(s=>`<option value="${s.id}" ${sellFilter.sku===s.id?'selected':''}>${s.name}</option>`).join('')}
-        </select>
-      </div>
+      ${chipSelect('sf-country','Country', COUNTRIES.map(c=>[c,REGIONS[c].name]), sellFilter.country)}
+      ${chipSelect('sf-reseller','Reseller', RESELLERS.map(r=>[r.id,r.name]), sellFilter.reseller)}
+      ${chipSelect('sf-sku','SKU', d.skus.map(s=>[s.id,s.name]), sellFilter.sku)}
     </div>
 
     <div class="grid cols-4" style="margin-bottom:14px">
@@ -2020,7 +2017,7 @@ function execPerf(){
 // driven by simple filters (Period · Game · Customer · Supplier).
 // Grounded: everything below comes from real delivered-order data already
 // in UCubix. Suppliers = publishers; Customers = resellers. No Phase-2 fields.
-let snapFilter = { period:'30d', sku:'', customer:'', supplier:'' };
+let snapFilter = { period:'30d', sku:[], customer:[], supplier:[] };
 // Compare mode: dim '' = off, 'supplier' = publisher-vs-publisher, 'customer' = customer-vs-customer.
 let snapCompare = { dim:'', a:'', b:'', c:'' };
 
@@ -2095,6 +2092,28 @@ function periodControl(key, pfx){
     <div class="ctrl"><label>To</label><input type="date" id="${pfx}-to" value="${to}" max="${today}" style="background:transparent;border:none;color:var(--text);font-size:13px"/></div>` : ''}`;
 }
 
+// ---- Chip multi-select component ----
+// Registry maps a control id -> {get:()=>array, set:(array)=>void, options:[[val,label],...]}
+const CHIP_REG = {};
+function chipSelect(id, label, options, selected){
+  CHIP_REG[id] = { options };
+  const sel = selected || [];
+  const labelOf = v => (options.find(o=>o[0]===v)||[v,v])[1];
+  const chips = sel.length
+    ? sel.map(v=>`<span class="chip">${labelOf(v)}<b onclick="event.stopPropagation();chipRemove('${id}','${v}')">×</b></span>`).join('')
+    : `<span class="ph">All ${label.toLowerCase()}</span>`;
+  const items = options.map(([v,l])=>`<div class="it ${sel.includes(v)?'on':''}" onclick="event.stopPropagation();chipToggle('${id}','${v}')">${sel.includes(v)?'✓':'&nbsp;&nbsp;'} ${l}</div>`).join('');
+  return `<div class="fld"><label>${label}</label>
+    <div class="chipsel" id="${id}">
+      <div class="box" onclick="chipOpen('${id}')">${chips}</div>
+      <div class="pop">${items}</div>
+    </div></div>`;
+}
+function chipOpen(id){ const el=document.getElementById(id); if(!el)return; const wasOpen=el.classList.contains('open'); document.querySelectorAll('.chipsel.open').forEach(x=>x.classList.remove('open')); if(!wasOpen) el.classList.add('open'); }
+function chipToggle(id, val){ const r=CHIP_REG[id]; if(!r||!r.set)return; const cur=r.get(); r.set(cur.includes(val)?cur.filter(x=>x!==val):[...cur,val]); }
+function chipRemove(id, val){ const r=CHIP_REG[id]; if(!r||!r.set)return; r.set(r.get().filter(x=>x!==val)); }
+document.addEventListener('click', e=>{ if(!e.target.closest('.chipsel')) document.querySelectorAll('.chipsel.open').forEach(x=>x.classList.remove('open')); });
+
 // Tiny inline revenue sparkline (white line on the gradient card).
 function snapSpark(vals){
   if(!vals || !vals.some(v=>v>0)) return '';
@@ -2114,9 +2133,9 @@ function viewEpicSnapshot(){
 
   // Shared filter so "this period" and "previous period" stay apples-to-apples.
   const matchesFilters = o =>
-    (!snapFilter.supplier || o.supplier === snapFilter.supplier) &&
-    (!snapFilter.customer || o.reseller === snapFilter.customer) &&
-    (!snapFilter.sku      || o.sku === snapFilter.sku);
+    (!snapFilter.supplier.length || snapFilter.supplier.includes(o.supplier)) &&
+    (!snapFilter.customer.length || snapFilter.customer.includes(o.reseller)) &&
+    (!snapFilter.sku.length      || snapFilter.sku.includes(o.sku));
 
   // Pull every delivered order across all suppliers, attach supplier code.
   const deliveredBase = Object.values(STATE.publishers)
@@ -2236,7 +2255,7 @@ function viewEpicSnapshot(){
   const opt = (val, label, sel) => `<option value="${val}" ${sel===val?'selected':''}>${label}</option>`;
 
   const periodLabel = win.label;
-  const activeFilters = [snapFilter.sku, snapFilter.customer, snapFilter.supplier].filter(Boolean).length;
+  const activeFilters = snapFilter.sku.length + snapFilter.customer.length + snapFilter.supplier.length;
 
   // Rank medals for the leaderboards.
   const medal = i => i===0 ? '#f59e0b' : i===1 ? '#94a3b8' : i===2 ? '#b45309' : 'var(--panel3)';
@@ -2244,31 +2263,21 @@ function viewEpicSnapshot(){
   // Bar palette so each row reads distinctly instead of one flat blue.
   const BARS = ['#3b82f6','#6366f1','#8b5cf6','#a855f7','#d946ef','#ec4899','#f43f5e','#fb7185'];
 
-  // ---- Compare-mode setup (publisher-vs-publisher or customer-vs-customer) ----
-  const cmpDim = snapCompare.dim;
-  const cmpEntities = cmpDim==='supplier'
-    ? Object.entries(STATE.publishers).map(([id,p])=>({id,name:p.name}))
-    : cmpDim==='customer' ? RESELLERS.map(r=>({id:r.id,name:r.name})) : [];
-  const cmpAId = snapCompare.a || cmpEntities[0]?.id || '';
-  const cmpBId = snapCompare.b || cmpEntities[1]?.id || cmpEntities[0]?.id || '';
-  const cmpCId = snapCompare.c || cmpEntities[2]?.id || cmpEntities[0]?.id || '';
-  const cmpWord = cmpDim==='supplier' ? 'Publisher' : 'Customer';
-
-  // Shared filter bar — single-entity filters in normal mode, A/B pickers in compare mode.
+  // Filter bar — chip multi-select for Game / Customer / Supplier (replaces the old Compare button).
   const filtersHtml = `<div class="snap-filters">
           ${periodControl(snapFilter.period,'snap')}
-          ${ cmpDim ? `
-          <div class="fld"><label>${cmpWord} A</label><select id="snap-cmp-a">${cmpEntities.map(e=>opt(e.id,e.name,cmpAId)).join('')}</select></div>
-          <div class="fld"><label>${cmpWord} B</label><select id="snap-cmp-b">${cmpEntities.map(e=>opt(e.id,e.name,cmpBId)).join('')}</select></div>
-          <div class="fld"><label>${cmpWord} C</label><select id="snap-cmp-c">${opt('','— none —',cmpCId)}${cmpEntities.map(e=>opt(e.id,e.name,cmpCId)).join('')}</select></div>
-          ` : `
-          <div class="fld"><label>Game</label><select id="snap-sku">${opt('','All games',snapFilter.sku)}${allSkus.map(s=>opt(s.id,s.name,snapFilter.sku)).join('')}</select></div>
-          <div class="fld"><label>Customer</label><select id="snap-customer">${opt('','All customers',snapFilter.customer)}${RESELLERS.map(r=>opt(r.id,r.name,snapFilter.customer)).join('')}</select></div>
-          <div class="fld"><label>Supplier</label><select id="snap-supplier">${opt('','All suppliers',snapFilter.supplier)}${Object.entries(STATE.publishers).map(([c,p])=>opt(c,p.name,snapFilter.supplier)).join('')}</select></div>
-          `}
-          <div class="fld"><label>Compare</label><select id="snap-cmp-dim">${opt('','Off',cmpDim)}${opt('supplier','Publishers',cmpDim)}${opt('customer','Customers',cmpDim)}</select></div>
+          ${chipSelect('snap-sku','Game', allSkus.map(s=>[s.id,s.name]), snapFilter.sku)}
+          ${chipSelect('snap-customer','Customer', RESELLERS.map(r=>[r.id,r.name]), snapFilter.customer)}
+          ${chipSelect('snap-supplier','Supplier', Object.entries(STATE.publishers).map(([c,p])=>[c,p.name]), snapFilter.supplier)}
           <button class="btn ghost sm" id="snap-reset">↺</button>
         </div>`;
+  // When 2+ are selected in exactly one filter, show a comparison across those picks.
+  const cmpDim = snapFilter.customer.length>=2 ? 'customer'
+               : snapFilter.supplier.length>=2 ? 'supplier'
+               : snapFilter.sku.length>=2 ? 'sku' : '';
+  const cmpIds = cmpDim==='customer'?snapFilter.customer : cmpDim==='supplier'?snapFilter.supplier : cmpDim==='sku'?snapFilter.sku : [];
+  const cmpNameOf = id => cmpDim==='customer'?resellerName(id) : cmpDim==='supplier'?(STATE.publishers[id]?.name||id) : (allSkus.find(s=>s.id===id)?.name||id);
+  const cmpPick = id => deliveredAll.filter(o => cmpDim==='customer'?o.reseller===id : cmpDim==='supplier'?o.supplier===id : o.sku===id);
 
   const snapStyles = `
     <style>
@@ -2323,14 +2332,11 @@ function viewEpicSnapshot(){
     </style>`;
 
   // ---- Bottom panel: two leaderboards normally, or the A-vs-B table when Compare is on ----
-  let bottomHtml;
+  let compareHtml = '', bottomHtml = '';
   if(cmpDim){
-    const nameOf = id => cmpEntities.find(e=>e.id===id)?.name || id;
-    const pick = id => deliveredAll.filter(o => cmpDim==='supplier' ? o.supplier===id : o.reseller===id);
-    // Build the set of entities being compared (C optional, and de-duped so the same one isn't shown twice).
-    const ids = [cmpAId, cmpBId, cmpCId].filter((id,i,arr)=> id && arr.indexOf(id)===i);
-    const cols = ids.map(id => ({ id, name:nameOf(id), m:metricsFor(pick(id)) }));
-    const ico = cmpDim==='supplier'?'🏢':'🤝';
+    const ids = cmpIds.filter((id,i,arr)=> id && arr.indexOf(id)===i);
+    const cols = ids.map(id => ({ id, name:cmpNameOf(id), m:metricsFor(cmpPick(id)) }));
+    const ico = cmpDim==='supplier'?'🏢':cmpDim==='sku'?'🎮':'🤝';
     // Per-metric leader (max across the compared entities) so each row highlights the winner.
     const maxOf = key => Math.max(...cols.map(c=>c.m[key]), 0);
     const maxRev = maxOf('revenue'), maxUnits = maxOf('units'), maxAov = maxOf('avgOrder');
@@ -2346,9 +2352,9 @@ function viewEpicSnapshot(){
       lead = 'No sales for any selected in this period.';
     }
     const cell = (val, isMax, fmt) => `<td class="v ${val>=isMax && val>0 ?'win':''}">${fmt(val)}</td>`;
-    bottomHtml = `
-      <div class="snap-cmp-lead">${lead}</div>
-      <div class="card snap-cmp-card">
+    compareHtml = `
+      <div class="snap-cmp-lead" style="margin-bottom:12px">${lead}</div>
+      <div class="card snap-cmp-card" style="margin-bottom:16px">
         <table class="snap-cmp-table">
           <thead><tr><th>Head-to-head</th>${cols.map(c=>`<th>${ico} ${c.name}</th>`).join('')}</tr></thead>
           <tbody>
@@ -2358,8 +2364,9 @@ function viewEpicSnapshot(){
           </tbody>
         </table>
       </div>`;
-  } else {
-    bottomHtml = `
+  }
+  {
+    const bottomBoards = `
       <div class="snap-boards">
         <div class="card snap-board">
           <div class="snap-card-head"><h3>🎮 Top Games</h3><span class="cnt">${topSku.length} of ${Object.keys(bySku).length}</span></div>
@@ -2413,6 +2420,7 @@ function viewEpicSnapshot(){
             </div>`).join('') : '<p class="muted" style="padding:24px 0;text-align:center">No sales in this period.</p>'}
         </div>
       </div>`;
+    bottomHtml = compareHtml + bottomBoards;
   }
 
   return `${snapStyles}
@@ -2803,7 +2811,7 @@ function viewPubSupply(){
 }
 
 // ---- EPICSOFT: REPORTS (UCBX-528 multi-report hub) ------------------
-let reportFilter = { type:'sales', period:'90d', country:'', reseller:'', sku:'', publisher:'' };
+let reportFilter = { type:'sales', period:'90d', country:[], reseller:[], sku:[], publisher:[] };
 
 function viewEpicReports(){
   const internal = document.body.dataset.phase==='2';
@@ -2832,21 +2840,9 @@ function viewEpicReports(){
           <option value="365d" ${reportFilter.period==='365d'?'selected':''}>12 months</option>
         </select>
       </div>
-      <div class="ctrl"><label>Publisher</label>
-        <select id="rep-publisher"><option value="">All</option>
-          ${Object.entries(PUBLISHERS).map(([c,p])=>`<option value="${c}" ${reportFilter.publisher===c?'selected':''}>${p.name}</option>`).join('')}
-        </select>
-      </div>
-      <div class="ctrl"><label>Reseller</label>
-        <select id="rep-reseller"><option value="">All</option>
-          ${RESELLERS.map(r=>`<option value="${r.id}" ${reportFilter.reseller===r.id?'selected':''}>${r.name}</option>`).join('')}
-        </select>
-      </div>
-      <div class="ctrl"><label>Country</label>
-        <select id="rep-country"><option value="">All</option>
-          ${COUNTRIES.map(c=>`<option value="${c}" ${reportFilter.country===c?'selected':''}>${REGIONS[c].name}</option>`).join('')}
-        </select>
-      </div>
+      ${chipSelect('rep-publisher','Publisher', Object.entries(PUBLISHERS).map(([c,p])=>[c,p.name]), reportFilter.publisher)}
+      ${chipSelect('rep-reseller','Reseller', RESELLERS.map(r=>[r.id,r.name]), reportFilter.reseller)}
+      ${chipSelect('rep-country','Country', COUNTRIES.map(c=>[c,REGIONS[c].name]), reportFilter.country)}
     </div>
 
     ${renderReportBody()}
@@ -2862,7 +2858,7 @@ const REPORTS = {
                           return { headers:['Month','Reseller','SKU','Country','Total Qty'],
                                    rows: Object.entries(g).map(([k,q])=>{const[m,r,s,c]=k.split('|');return[m,resellerName(r),s,c,q];}).sort((a,b)=>b[4]-a[4]).slice(0,40) }; },
   'supply':       ()=>({ headers:['Date','SO ID','Publisher','SKU','Qty','Status','Trigger'],
-                          rows: STATE.supplyOrders.filter(s=>!reportFilter.publisher||s.publisherCode===reportFilter.publisher).slice(0,40).map(s=>{
+                          rows: STATE.supplyOrders.filter(s=>!reportFilter.publisher.length||reportFilter.publisher.includes(s.publisherCode)).slice(0,40).map(s=>{
                             const sku = STATE.publishers[s.publisherCode]?.skus.find(x=>x.id===s.sku);
                             return [new Date(s.createdAt).toLocaleDateString(), s.id, s.publisherCode, sku?sku.name:s.sku, s.qty, s.status, s.triggeredByOrder||'manual'];
                           }) }),
@@ -2889,7 +2885,7 @@ const REPORTS = {
 function collectFromPublishers(fn){
   const out = [];
   Object.entries(STATE.publishers).forEach(([code,p])=>{
-    if(reportFilter.publisher && code!==reportFilter.publisher) return;
+    if(reportFilter.publisher.length && !reportFilter.publisher.includes(code)) return;
     out.push(...fn(code,p));
   });
   return out;
@@ -2898,9 +2894,9 @@ function renderReportBody(){
   const cutoff = reportFilter.period==='30d'?30:reportFilter.period==='90d'?90:365;
   const since = Date.now() - 1000*60*60*24*cutoff;
   let orders = Object.entries(STATE.publishers).flatMap(([code,p])=>p.orders.map(o=>({...o,pub:code,skuName:p.skus.find(s=>s.id===o.sku)?.name||o.sku})));
-  if(reportFilter.publisher) orders = orders.filter(o=>o.pub===reportFilter.publisher);
-  if(reportFilter.reseller)  orders = orders.filter(o=>o.reseller===reportFilter.reseller);
-  if(reportFilter.country)   orders = orders.filter(o=>o.country===reportFilter.country);
+  if(reportFilter.publisher.length) orders = orders.filter(o=>reportFilter.publisher.includes(o.pub));
+  if(reportFilter.reseller.length)  orders = orders.filter(o=>reportFilter.reseller.includes(o.reseller));
+  if(reportFilter.country.length)   orders = orders.filter(o=>reportFilter.country.includes(o.country));
   orders = orders.filter(o=>o.createdAt>=since);
   const cfg = REPORTS[reportFilter.type];
   if(!cfg) return '<p class="muted">Pick a report above.</p>';
@@ -4170,37 +4166,13 @@ function attachDynamicHandlers(){
       if(empty) empty.style.display = shown===0 ? 'block' : 'none';
     });
   }
-  // Business Snapshot filters
+  // Business Snapshot filters — chip multi-select
   wirePeriod('snap', ()=>snapFilter.period, v=>snapFilter.period=v);
-  const snG = document.getElementById('snap-sku');
-  const snC = document.getElementById('snap-customer');
-  const snS = document.getElementById('snap-supplier');
+  if(CHIP_REG['snap-sku'])      { CHIP_REG['snap-sku'].get=()=>snapFilter.sku;           CHIP_REG['snap-sku'].set=a=>{snapFilter.sku=a; renderAll();}; }
+  if(CHIP_REG['snap-customer']) { CHIP_REG['snap-customer'].get=()=>snapFilter.customer; CHIP_REG['snap-customer'].set=a=>{snapFilter.customer=a; renderAll();}; }
+  if(CHIP_REG['snap-supplier']) { CHIP_REG['snap-supplier'].get=()=>snapFilter.supplier; CHIP_REG['snap-supplier'].set=a=>{snapFilter.supplier=a; renderAll();}; }
   const snR = document.getElementById('snap-reset');
-  if(snG) snG.addEventListener('change', e=>{ snapFilter.sku = e.target.value; renderAll(); });
-  if(snC) snC.addEventListener('change', e=>{ snapFilter.customer = e.target.value; renderAll(); });
-  if(snS) snS.addEventListener('change', e=>{ snapFilter.supplier = e.target.value; renderAll(); });
-  if(snR) snR.addEventListener('click', ()=>{ snapFilter = { period:'30d', sku:'', customer:'', supplier:'' }; snapCompare = { dim:'', a:'', b:'', c:'' }; renderAll(); });
-  // Compare-mode dropdowns
-  const snCD = document.getElementById('snap-cmp-dim');
-  const snCA = document.getElementById('snap-cmp-a');
-  const snCB = document.getElementById('snap-cmp-b');
-  const snCC = document.getElementById('snap-cmp-c');
-  if(snCD) snCD.addEventListener('change', e=>{
-    snapCompare.dim = e.target.value;
-    // Default A/B/C to the first three entities of the chosen dimension.
-    const list = snapCompare.dim==='supplier' ? Object.keys(STATE.publishers)
-               : snapCompare.dim==='customer' ? RESELLERS.map(r=>r.id) : [];
-    snapCompare.a = list[0] || '';
-    snapCompare.b = list[1] || list[0] || '';
-    snapCompare.c = list[2] || '';
-    // Compare drills into entities, so the single-entity filters don't apply — clear them
-    // and the hero KPIs keep showing the overall period.
-    if(snapCompare.dim){ snapFilter.sku=''; snapFilter.customer=''; snapFilter.supplier=''; }
-    renderAll();
-  });
-  if(snCA) snCA.addEventListener('change', e=>{ snapCompare.a = e.target.value; renderAll(); });
-  if(snCB) snCB.addEventListener('change', e=>{ snapCompare.b = e.target.value; renderAll(); });
-  if(snCC) snCC.addEventListener('change', e=>{ snapCompare.c = e.target.value; renderAll(); });
+  if(snR) snR.addEventListener('click', ()=>{ snapFilter = { period:'30d', sku:[], customer:[], supplier:[] }; renderAll(); });
 
   // Pricing filters
   const pSku = document.getElementById('pricing-sku');
@@ -4208,15 +4180,12 @@ function attachDynamicHandlers(){
   if(pSku) pSku.addEventListener('change', e=>{ pricingFilter.sku = e.target.value; renderAll(); });
   if(pCountry) pCountry.addEventListener('change', e=>{ pricingFilter.country = e.target.value; renderAll(); });
 
-  // Sell-thru filters
+  // Sell-thru filters — chip multi-select
   const sP = document.getElementById('sf-period');
-  const sC = document.getElementById('sf-country');
-  const sR = document.getElementById('sf-reseller');
-  const sS = document.getElementById('sf-sku');
   if(sP) sP.addEventListener('change', e=>{ sellFilter.period = e.target.value; renderAll(); });
-  if(sC) sC.addEventListener('change', e=>{ sellFilter.country = e.target.value; renderAll(); });
-  if(sR) sR.addEventListener('change', e=>{ sellFilter.reseller = e.target.value; renderAll(); });
-  if(sS) sS.addEventListener('change', e=>{ sellFilter.sku = e.target.value; renderAll(); });
+  if(CHIP_REG['sf-country'])  { CHIP_REG['sf-country'].get=()=>sellFilter.country;   CHIP_REG['sf-country'].set=a=>{sellFilter.country=a; renderAll();}; }
+  if(CHIP_REG['sf-reseller']) { CHIP_REG['sf-reseller'].get=()=>sellFilter.reseller; CHIP_REG['sf-reseller'].set=a=>{sellFilter.reseller=a; renderAll();}; }
+  if(CHIP_REG['sf-sku'])      { CHIP_REG['sf-sku'].get=()=>sellFilter.sku;           CHIP_REG['sf-sku'].set=a=>{sellFilter.sku=a; renderAll();}; }
 
   // Settings
   const sCurr = document.getElementById('set-currency');
@@ -4228,17 +4197,14 @@ function attachDynamicHandlers(){
   if(sAuto) sAuto.addEventListener('change', e=>{ STATE.settings.autoApproveLicenseThreshold=+e.target.value; persist(); });
   if(sSup)  sSup.addEventListener('change',  e=>{ STATE.settings.superAdminApprovalRequired=e.target.checked; persist(); });
 
-  // Reports filters
+  // Reports filters — chip multi-select for publisher/reseller/country
   const repType = document.getElementById('rep-type');
   const repPeriod = document.getElementById('rep-period');
-  const repPub = document.getElementById('rep-publisher');
-  const repRes = document.getElementById('rep-reseller');
-  const repCountry = document.getElementById('rep-country');
   if(repType) repType.addEventListener('change', e=>{ reportFilter.type = e.target.value; renderAll(); });
   if(repPeriod) repPeriod.addEventListener('change', e=>{ reportFilter.period = e.target.value; renderAll(); });
-  if(repPub) repPub.addEventListener('change', e=>{ reportFilter.publisher = e.target.value; renderAll(); });
-  if(repRes) repRes.addEventListener('change', e=>{ reportFilter.reseller = e.target.value; renderAll(); });
-  if(repCountry) repCountry.addEventListener('change', e=>{ reportFilter.country = e.target.value; renderAll(); });
+  if(CHIP_REG['rep-publisher']) { CHIP_REG['rep-publisher'].get=()=>reportFilter.publisher; CHIP_REG['rep-publisher'].set=a=>{reportFilter.publisher=a; renderAll();}; }
+  if(CHIP_REG['rep-reseller'])  { CHIP_REG['rep-reseller'].get=()=>reportFilter.reseller;  CHIP_REG['rep-reseller'].set=a=>{reportFilter.reseller=a; renderAll();}; }
+  if(CHIP_REG['rep-country'])   { CHIP_REG['rep-country'].get=()=>reportFilter.country;    CHIP_REG['rep-country'].set=a=>{reportFilter.country=a; renderAll();}; }
 
   // Webhooks toggles — UCBX-532
   document.querySelectorAll('[data-wh-toggle]').forEach(inp=>{
