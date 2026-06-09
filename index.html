@@ -169,6 +169,17 @@
     /* Snapshot filter row stacks instead of squishing */
     .snap-head-row .fld,.snap-head-row select{width:100%}
 
+    /* Filters + chip multi-selects: stack full-width, never overflow */
+    .snap-filters{flex-direction:column;align-items:stretch !important;gap:10px;padding:12px}
+    .snap-filters .fld{width:100%}
+    .snap-filters select{min-width:0;width:100%}
+    .chipsel{min-width:0;width:100%}
+    .chipsel .pop{min-width:0;left:0;right:0}
+    .chipsel .box.summary{width:100%}
+    /* Period custom date inputs full width */
+    .ctrl{flex-wrap:wrap}
+    .ctrl input[type="date"]{width:100%}
+
     /* Tables: fit the viewport by WRAPPING, not horizontal scroll.
        (body has overflow-x:hidden, so sideways scroll gets clipped — wrap instead.) */
     .card{padding:14px}
@@ -177,8 +188,11 @@
     /* Wrapper cards that were set to scroll horizontally: let them fit instead */
     .card[style*="overflow-x"]{overflow-x:visible !important}
 
-    /* Compare-mode table stays readable */
-    .snap-cmp-table .v{font-size:18px}
+    /* Compare-mode table: many columns — allow horizontal scroll inside the card only */
+    .snap-cmp-card{overflow-x:auto}
+    .snap-cmp-table{table-layout:auto;min-width:0}
+    .snap-cmp-table th,.snap-cmp-table td{padding:10px 8px;white-space:nowrap}
+    .snap-cmp-table .v{font-size:16px}
 
     /* Tighten ranked rows for narrow screens */
     .ranked .rrow{grid-template-columns:1fr 52px 60px}
