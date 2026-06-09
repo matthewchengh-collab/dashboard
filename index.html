@@ -1418,8 +1418,12 @@ function skuBreakdownBody(s, d){
 }
 // Full-page SKU detail (hash route #sku/ID)
 function viewSkuDetail(id){
-  const d = pubData();
-  const s = d.skus.find(x=>x.id===id);
+  // Find whichever publisher owns this SKU (not just the currently-selected one).
+  let d = null, s = null;
+  for(const p of Object.values(STATE.publishers)){
+    const found = p.skus.find(x=>x.id===id);
+    if(found){ d = p; s = found; break; }
+  }
   if(!s) return `<p class="muted">SKU not found. <a href="#" onclick="location.hash='';return false">← Back</a></p>`;
   const link = `${location.origin}${location.pathname}#sku/${id}`;
   return `
@@ -2243,7 +2247,7 @@ function viewEpicSnapshot(){
         <div class="card snap-board">
           <div class="snap-card-head"><h3>🎮 Top Games</h3><span class="cnt">${topSku.length} of ${Object.keys(bySku).length}</span></div>
           ${topSku.length ? topSku.map(([id,v],i)=>`
-            <div class="row-item">
+            <div class="row-item" style="cursor:pointer" onclick="location.hash='sku/${id}'" title="View full breakdown">
               <span class="snap-rank" style="background:${medal(i)};color:${medalText(i)}">${i+1}</span>
               <div style="min-width:0">
                 <div class="snap-name" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.name}</div>
