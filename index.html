@@ -1065,10 +1065,18 @@ function welcomeCard(){
 }
 
 // ---- PUBLISHER: HOME -------------------------------------------------
+let pubFilter = { period:'90d' };
 function viewPubHome(){
   const d = pubData();
   const internal = document.body.dataset.phase==='2';
-  const delivered = d.orders.filter(isDelivered);
+
+  // ---- Period engine: drive all home KPIs off the selected window ----
+  const win = snapResolvePeriod(pubFilter.period);
+  const inWin   = o => isDelivered(o) && o.createdAt >= win.start && o.createdAt < win.end;
+  const inPrev  = o => win.prevStart!=null && isDelivered(o) && o.createdAt >= win.prevStart && o.createdAt < win.prevEnd;
+  const delivered = d.orders.filter(inWin);          // delivered orders in the chosen period
+  const prevDelivered = d.orders.filter(inPrev);
+  const periodLabel = win.label;
   const gmv = delivered.reduce((a,o)=>a+o.unitPriceUSD*o.qty,0);
   const units = delivered.reduce((a,o)=>a+o.qty,0);
   const ordersOpen = d.orders.filter(o=>o.status!=='delivered' && !o.revertedAt).length;
@@ -1097,36 +1105,51 @@ function viewPubHome(){
   delivered.forEach(o=>{ byCountry[o.country] = (byCountry[o.country]||0) + o.unitPriceUSD*o.qty; });
   const totalCountry = Object.values(byCountry).reduce((a,b)=>a+b,0)||1;
 
-  // ---- Real period-over-period deltas: current 90d vs the 90d before it ----
-  const DAY = 1000*60*60*24, NOW = Date.now();
-  const curWin  = d.orders.filter(o => isDelivered(o) && o.createdAt >= NOW-90*DAY);
-  const prevWin = d.orders.filter(o => isDelivered(o) && o.createdAt >= NOW-180*DAY && o.createdAt < NOW-90*DAY);
+  // ---- Real period-over-period deltas: selected window vs the window before it ----
   const sum = (arr, fn) => arr.reduce((a,o)=>a+fn(o), 0);
+  const hasPrev = win.prevStart != null;
+  // Gross profit = revenue − COGS (estimatedCost per SKU/country), same source as Finance.
+  const costOf = o => { const s = d.skus.find(x=>x.id===o.sku); return (s?.prices[o.country]?.estimatedCost||0)*o.qty; };
   // Plain-language up/down chip from two real numbers — no hardcoded movement.
   const delta = (now, prev, unit) => {
+    if(!hasPrev) return { delta:'—', deltaClass:'flat' };
     if(prev<=0) return { delta: now>0?'new':'—', deltaClass:'flat' };
     const pc = (now-prev)/prev*100;
     if(Math.abs(pc) < 0.5) return { delta:'about the same', deltaClass:'flat' };
     return { delta:`${pc>0?'▲':'▼'} ${Math.abs(pc).toFixed(1)}%${unit||''}`, deltaClass: pc>0?'up':'down' };
   };
-  const curGmv   = sum(curWin,  o=>o.unitPriceUSD*o.qty), prevGmv   = sum(prevWin, o=>o.unitPriceUSD*o.qty);
-  const curUnits = sum(curWin,  o=>o.qty),                prevUnits = sum(prevWin, o=>o.qty);
-  const curRes   = new Set(curWin.map(o=>o.reseller)).size, prevRes = new Set(prevWin.map(o=>o.reseller)).size;
+  const curGmv   = gmv,                                    prevGmv   = sum(prevDelivered, o=>o.unitPriceUSD*o.qty);
+  const curUnits = units,                                  prevUnits = sum(prevDelivered, o=>o.qty);
+  const curProfit= gmv - sum(delivered, costOf),           prevProfit= prevGmv - sum(prevDelivered, costOf);
+  const gmPct    = gmv ? (curProfit/gmv)*100 : 0;
+  const curRes   = new Set(delivered.map(o=>o.reseller)).size, prevRes = new Set(prevDelivered.map(o=>o.reseller)).size;
   const resDiff  = curRes - prevRes;
+  const vsLabel  = hasPrev ? ` vs ${win.prevLabel}` : '';
+
+  const opt = (val,label,sel) => `<option value="${val}" ${sel===val?'selected':''}>${label}</option>`;
 
   return `
     ${welcomeCard()}
 
-    <div class="grid cols-4">
-      ${kpi('Quarterly sales',   money(gmv),                   {...delta(curGmv,prevGmv,' vs prior 90d'), chip:ticket('UCBX-531', internal)})}
-      ${kpi('Units Delivered', num(units),                   delta(curUnits,prevUnits))}
-      ${kpi('Open Orders',     ordersOpen,                   {delta:'live',        deltaClass:'flat'})}
-      ${kpi('Active Resellers',Object.keys(byRes).length,    {delta: resDiff>0?`▲ ${resDiff} vs prior 90d`:resDiff<0?`▼ ${Math.abs(resDiff)} vs prior 90d`:'no change', deltaClass: resDiff>0?'up':resDiff<0?'down':'flat', chip:ticket('UCBX-494', internal)})}
+    <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px;flex-wrap:wrap">
+      <h2 style="margin:0">Overview — ${periodLabel}</h2>
+      <div class="ctrl"><label>Period</label>
+        <select id="pub-period">${snapPeriodOptions().map(([k,v])=>opt(k,v,pubFilter.period)).join('')}</select>
+      </div>
+    </div>
+
+    <div class="grid cols-3">
+      ${kpi('Sales',          money(gmv),       {...delta(curGmv,prevGmv,vsLabel),    chip:ticket('UCBX-531', internal)})}
+      ${kpi('Gross Profit',   money(curProfit), delta(curProfit,prevProfit,vsLabel))}
+      ${kpi('Gross Margin',   gmPct.toFixed(1)+'%', {delta:'profit ÷ sales', deltaClass:'flat'})}
+      ${kpi('Units Delivered',num(units),       delta(curUnits,prevUnits,vsLabel))}
+      ${kpi('Open Orders',    ordersOpen,       {delta:'live', deltaClass:'flat'})}
+      ${kpi('Active Resellers',Object.keys(byRes).length, {delta: !hasPrev?'—':resDiff>0?`▲ ${resDiff}${vsLabel}`:resDiff<0?`▼ ${Math.abs(resDiff)}${vsLabel}`:'no change', deltaClass: resDiff>0?'up':resDiff<0?'down':'flat', chip:ticket('UCBX-494', internal)})}
     </div>
 
     <div class="grid" style="margin-top:16px">
       <div class="card">
-        <div class="row" style="margin-bottom:10px"><h3>Top Games by Revenue (90d)</h3><span class="spacer"></span>${ticket('UCBX-444', internal)}${ticket('BUG-444', internal)}</div>
+        <div class="row" style="margin-bottom:10px"><h3>Top Games by Revenue — ${periodLabel}</h3><span class="spacer"></span>${ticket('UCBX-444', internal)}${ticket('BUG-444', internal)}</div>
         ${bareTable(['Game ID','Title','Units','Revenue (USD)'], topSkus, ([id,v])=>`<tr>
           <td><code class="dim">${id}</code></td>
           <td>${v.name}</td>
@@ -1749,7 +1772,10 @@ function snapResolvePeriod(key){
     case 'today': return roll(DAY,'Today','yesterday');
     case '7d':    return roll(7*DAY,'Last 7 days','last 7 days');
     case '30d':   return roll(30*DAY,'Last 30 days','last 30 days');
+    case '60d':   return roll(60*DAY,'Last 60 days','last 60 days');
     case '90d':   return roll(90*DAY,'Last 90 days','last 90 days');
+    case '120d':  return roll(120*DAY,'Last 120 days','last 120 days');
+    case '1y':    return roll(365*DAY,'Last 12 months','prior 12 months');
     case 'all':   return {label:'All time', start:0, end:now, prevStart:null, prevEnd:null, prevLabel:''};
   }
   const m = /^fy(\d+)$/.exec(key);
@@ -1766,7 +1792,8 @@ function snapResolvePeriod(key){
 // Dropdown options: rolling windows, then the 3 most recent fiscal years, then all-time.
 function snapPeriodOptions(){
   const fy = snapCurrentFy(Date.now());
-  return [['today','Today'],['7d','Last 7 days'],['30d','Last 30 days'],['90d','Last 90 days'],
+  return [['today','Today'],['7d','Last 7 days'],['30d','Last 30 days'],['60d','Last 60 days'],
+          ['90d','Last 90 days'],['120d','Last 120 days'],['1y','Last 12 months'],
           [`fy${fy}`,`FY${fy} (this FY)`],[`fy${fy-1}`,`FY${fy-1}`],[`fy${fy-2}`,`FY${fy-2}`],
           ['all','All time']];
 }
@@ -3772,6 +3799,9 @@ function attachDynamicHandlers(){
       persist(); renderAll();
     });
   });
+  // Publisher home period selector
+  const pubP = document.getElementById('pub-period');
+  if(pubP) pubP.addEventListener('change', e=>{ pubFilter.period = e.target.value; renderAll(); });
   // Business Snapshot filters
   const snP = document.getElementById('snap-period');
   const snG = document.getElementById('snap-sku');
