@@ -1092,7 +1092,7 @@ function viewPubHome(){
     bySku[o.sku].qty += o.qty;
     bySku[o.sku].rev += o.unitPriceUSD * o.qty;
   });
-  const topSkus = Object.entries(bySku).sort((a,b)=>b[1].rev-a[1].rev).slice(0,5);
+  const topSkus = Object.entries(bySku).sort((a,b)=>b[1].rev-a[1].rev).slice(0,10);
 
   // top resellers (UCBX-494)
   const byRes = {};
@@ -1101,13 +1101,13 @@ function viewPubHome(){
     byRes[o.reseller].qty += o.qty;
     byRes[o.reseller].rev += o.unitPriceUSD * o.qty;
   });
-  const topRes = Object.entries(byRes).sort((a,b)=>b[1].rev-a[1].rev).slice(0,5);
+  const topRes = Object.entries(byRes).sort((a,b)=>b[1].rev-a[1].rev).slice(0,10);
   const maxRev = topRes.length ? topRes[0][1].rev : 1;
 
   // country split
   const byCountry = {};
-  delivered.forEach(o=>{ byCountry[o.country] = (byCountry[o.country]||0) + o.unitPriceUSD*o.qty; });
-  const totalCountry = Object.values(byCountry).reduce((a,b)=>a+b,0)||1;
+  delivered.forEach(o=>{ const c = byCountry[o.country] || (byCountry[o.country] = {rev:0, units:0}); c.rev += o.unitPriceUSD*o.qty; c.units += o.qty; });
+  const totalCountry = Object.values(byCountry).reduce((a,b)=>a+b.rev,0)||1;
 
   // ---- Real period-over-period deltas: selected window vs the window before it ----
   const sum = (arr, fn) => arr.reduce((a,o)=>a+fn(o), 0);
@@ -1167,10 +1167,11 @@ function viewPubHome(){
       <div class="card">
         <div class="row" style="margin-bottom:10px"><h3>Country Split (USD)</h3><span class="spacer"></span>${ticket('CTRY', internal)}</div>
         <p class="sub" style="margin-bottom:14px">Country-level granularity per supplier API schema (TH ≠ VN within SEA region).</p>
-        ${bareTable(['Country','Revenue','Share'], Object.entries(byCountry).sort((a,b)=>b[1]-a[1]), ([c,v])=>`<tr>
+        ${bareTable(['Country','Units Sold','Revenue','Share'], Object.entries(byCountry).sort((a,b)=>b[1].rev-a[1].rev), ([c,v])=>`<tr>
           <td>${REGIONS[c].name} <span class="tag">${c}</span></td>
-          <td class="num">${money(v)}</td>
-          <td class="num">${(v/totalCountry*100).toFixed(1)}%</td>
+          <td class="num">${num(v.units)}</td>
+          <td class="num">${money(v.rev)}</td>
+          <td class="num">${(v.rev/totalCountry*100).toFixed(1)}%</td>
         </tr>`)}
       </div>
       <div class="card">
@@ -4210,5 +4211,3 @@ renderAll();
 </script>
 </body>
 </html>
-
-<!-- redeploy 07:01:16Z -->
