@@ -2185,13 +2185,13 @@ function viewEpicSnapshot(){
       .snap-card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
       .snap-card-head h3{text-transform:none;letter-spacing:0;font-size:14px;color:var(--text);font-weight:700}
       .snap-card-head .cnt{font-size:11.5px;color:var(--muted)}
-      /* Fit-on-one-screen: lock the whole snapshot to the viewport, no page scroll. */
-      .snap-wrap{display:flex;flex-direction:column;gap:12px;height:calc(100vh - 120px);min-height:520px}
+      /* Grows with content and scrolls naturally — 4 boards no longer get squeezed. */
+      .snap-wrap{display:flex;flex-direction:column;gap:14px;min-height:0}
       .snap-head-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
       .snap-head-row h2{font-size:19px}
-      .snap-hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:0}
-      .snap-boards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;flex:1;min-height:0}
-      .snap-boards .snap-board{overflow:auto}
+      .snap-hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:0}
+      .snap-boards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+      .snap-boards .snap-board{min-height:0}
       /* Compare mode — plain head-to-head table, sits in the bottom panel */
       .snap-cmp-lead{font-size:14px;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 14px;box-shadow:var(--shadow-sm)}
       .snap-cmp-card{flex:1;min-height:0;overflow:auto;padding:4px 8px}
