@@ -2077,11 +2077,8 @@ function snapResolvePeriod(key){
 }
 // Dropdown options: rolling windows, calendar periods, then all-time. (No fiscal year.)
 function snapPeriodOptions(){
-  return [['today','Today'],['7d','Last 7 days'],['30d','Last 30 days'],['60d','Last 60 days'],
-          ['90d','Last 90 days'],['120d','Last 120 days'],['1y','Last 12 months'],
-          ['mtd','This month'],['lastmonth','Last month'],['qtd','This quarter'],['lastquarter','Last quarter'],['ytd','This year'],
-          ['custom','Custom range…'],
-          ['all','All time']];
+  return [['30d','Last 30 days'],['60d','Last 60 days'],['90d','Last 90 days'],
+          ['custom','Custom range…']];
 }
 // Renders the period dropdown + (when a custom range is active) two date inputs.
 // `key` is the stored period; `pfx` is an id prefix so the two views (snap / pub) don't collide.
