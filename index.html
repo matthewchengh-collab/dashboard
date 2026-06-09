@@ -354,6 +354,7 @@
   /* MODAL ============================================================== */
   .modal-bg{display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);backdrop-filter:blur(4px);z-index:50;align-items:center;justify-content:center}
   .modal-bg.on{display:flex}
+  .modal.wide{width:min(820px,94vw);max-height:88vh;overflow:auto}
   .modal{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:24px;width:min(560px,92vw);max-height:90vh;overflow:auto;box-shadow:var(--shadow-lg)}
   .modal h3{margin-bottom:10px;color:var(--text);text-transform:none;font-size:18px;letter-spacing:0;font-weight:600}
   .modal .x{float:right;background:transparent;border:none;color:var(--muted);cursor:pointer;font-size:20px;line-height:1}
@@ -1153,8 +1154,8 @@ function viewPubHome(){
 
     <div class="grid" style="margin-top:16px">
       <div class="card">
-        <div class="row" style="margin-bottom:10px"><h3>Top Games by Revenue — ${periodLabel}</h3><span class="spacer"></span>${ticket('UCBX-444', internal)}${ticket('BUG-444', internal)}</div>
-        ${bareTable(['Game ID','Title','Units','Revenue (USD)'], topSkus, ([id,v])=>`<tr>
+        <div class="row" style="margin-bottom:10px"><h3>Top Games by Revenue — ${periodLabel}</h3><span class="spacer"></span><span class="muted" style="font-size:11px">click a row for full breakdown</span>${ticket('UCBX-444', internal)}${ticket('BUG-444', internal)}</div>
+        ${bareTable(['Game ID','Title','Units','Revenue (USD)'], topSkus, ([id,v])=>`<tr style="cursor:pointer" onclick="openModal('sku',{id:'${id}'})">
           <td><code class="dim">${id}</code></td>
           <td>${v.name}</td>
           <td class="num">${num(v.qty)}</td>
@@ -1456,7 +1457,7 @@ function viewPubCatalog(){
         const r = resolvePrice(pr);
         const totalStock = s.batches.reduce((a,b)=>a+b.qty,0);
         return `
-        <div class="card tight catalog-card" data-name="${s.name.toLowerCase()}" data-id="${s.id.toLowerCase()}">
+        <div class="card tight catalog-card" data-name="${s.name.toLowerCase()}" data-id="${s.id.toLowerCase()}" style="cursor:pointer" onclick="openModal('sku',{id:'${s.id}'})">
           <div class="row" style="justify-content:space-between"><div><b>${s.name}</b><br/><code class="dim">${s.id}</code></div>
             <div style="text-align:right">${pr.steamDiscountPct?`<span class="tag warn">Steam −${pr.steamDiscountPct}%</span>`:''}</div>
           </div>
@@ -4041,6 +4042,42 @@ function openModal(kind, data){
        <p><b>What it's not:</b> not the real production app, not a real backend, not Phase 2. State persists in your browser only.</p>
        <p><b>Why it exists:</b> to show internal stakeholders + partner prospects what current UCubix work delivers, with $0 additional engineering spend.</p>
        <p><b>Phase 2 (future, needs funding)</b> lives in the "What's Next" tab — the May 1 plan items + multi-supplier arbitration + self-service supplier onboarding.</p>`);
+  } else if(kind==='sku'){
+    const d = pubData();
+    const s = d.skus.find(x=>x.id===data.id);
+    if(s){
+      // All delivered orders for this SKU
+      const ords = d.orders.filter(o=>o.sku===s.id && isDelivered(o));
+      const totUnits = ords.reduce((a,o)=>a+o.qty,0);
+      const totRev   = ords.reduce((a,o)=>a+o.unitPriceUSD*o.qty,0);
+      const cost     = c => (s.prices[c]?.estimatedCost||0);
+      const totCogs  = ords.reduce((a,o)=>a+cost(o.country)*o.qty,0);
+      const gp       = totRev-totCogs, gmPct = totRev?gp/totRev*100:0;
+      const stock    = s.batches.reduce((a,b)=>a+b.qty,0);
+      // per-country rollup
+      const byC={}; ords.forEach(o=>{ const x=byC[o.country]||(byC[o.country]={units:0,rev:0}); x.units+=o.qty; x.rev+=o.unitPriceUSD*o.qty; });
+      // per-reseller rollup
+      const byR={}; ords.forEach(o=>{ const x=byR[o.reseller]||(byR[o.reseller]={units:0,rev:0}); x.units+=o.qty; x.rev+=o.unitPriceUSD*o.qty; });
+      const recent = [...ords].sort((a,b)=>b.createdAt-a.createdAt).slice(0,8);
+      m.innerHTML = modalHTML(`${s.name} — full breakdown`,
+        `<p class="muted" style="margin-top:-6px"><code class="dim">${s.id}</code> · ${PUBLISHERS[s.publisher]?.name||s.publisher} · all-time delivered</p>
+         <div class="grid cols-4" style="margin:12px 0">
+           ${kpi('Units sold', num(totUnits), {delta:`${ords.length} orders`, deltaClass:'flat'})}
+           ${kpi('Revenue', money(totRev), {delta:'all-time', deltaClass:'flat'})}
+           ${kpi('Gross profit', money(gp), {delta:gmPct.toFixed(1)+'% margin', deltaClass: gmPct>=15?'up':'flat'})}
+           ${kpi('Stock on hand', num(stock), {delta:`${s.batches.length} batches`, deltaClass:'flat'})}
+         </div>
+         <h3 style="margin:14px 0 6px">By country</h3>
+         ${bareTable(['Country','Units','Revenue','Avg price'], Object.entries(byC).sort((a,b)=>b[1].rev-a[1].rev), ([c,v])=>`<tr><td>${REGIONS[c]?.name||c} <span class="tag">${c}</span></td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td><td class="num">${money(v.rev/v.units)}</td></tr>`,{empty:'No sales.'})}
+         <h3 style="margin:16px 0 6px">By reseller</h3>
+         ${bareTable(['Reseller','Tier','Units','Revenue'], Object.entries(byR).sort((a,b)=>b[1].rev-a[1].rev), ([r,v])=>`<tr><td>${resellerName(r)}</td><td><span class="tag">${resellerTier(r)}</span></td><td class="num">${num(v.units)}</td><td class="num">${money(v.rev)}</td></tr>`,{empty:'No sales.'})}
+         <h3 style="margin:16px 0 6px">Stock batches</h3>
+         ${bareTable(['Batch','Qty','Supplied'], s.batches.map(b=>b), b=>`<tr><td>${b.label}</td><td class="num">${num(b.qty)}</td><td class="muted">${ago(b.supplyDate)}</td></tr>`)}
+         <h3 style="margin:16px 0 6px">Recent orders</h3>
+         ${bareTable(['Order','Reseller','Country','Qty','Total'], recent, o=>`<tr><td><code class="dim">${o.id}</code></td><td>${resellerName(o.reseller)}</td><td>${o.country}</td><td class="num">${o.qty}</td><td class="num">${money(o.unitPriceUSD*o.qty)}</td></tr>`,{empty:'No recent orders.'})}
+        `);
+      m.classList.add('wide');
+    }
   } else if(kind==='revert-approve'){
     m.innerHTML = modalHTML('Super-admin approval required',
       `<p class="muted">UCBX-457: Privileged actions like order revert require super-admin sign-off.</p>
@@ -4056,7 +4093,7 @@ function openModal(kind, data){
   }
   document.getElementById('modal-bg').classList.add('on');
 }
-function closeModal(){ document.getElementById('modal-bg').classList.remove('on'); }
+function closeModal(){ document.getElementById('modal-bg').classList.remove('on'); document.getElementById('modal').classList.remove('wide'); }
 document.getElementById('modal-bg').addEventListener('click', e=>{ if(e.target.id==='modal-bg') closeModal(); });
 
 // =====================================================================
